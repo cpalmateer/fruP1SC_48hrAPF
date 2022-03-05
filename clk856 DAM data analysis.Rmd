@@ -1,0 +1,416 @@
+---
+title: "Analysis of Clk856 TrpA1 fruFLP activiy data"
+output: html_notebook
+---
+
+Analysis of data from ShinyR-DAM using R scripts from: Cichewicz, K., Hirsh, J. ShinyR-DAM: a program analyzing Drosophila activity, sleep and circadian rhythms. Commun Biol 1, 25 (2018). https://doi.org/10.1038/s42003-018-0031-9 
+```{r}
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(dplyr)
+library(plyr)
+library(zoo)
+library(gtools)
+library(scales)
+library(gridExtra)
+library(data.table)
+```
+
+
+```{r}
+Average_individual_daily_locomotor_activity<-read.csv("/Volumes/NO NAME/LDclkact/Average_individual_daily_locomotor_activity.csv")
+
+knitr::kable(head(Average_individual_daily_locomotor_activity))
+```
+
+
+Order list 
+```{r}
+
+Average_individual_daily_locomotor_activity$Condition <-factor(Average_individual_daily_locomotor_activity$Condition,levels = c("CS_M","CS_F", "Trp_Fru_FLP_M","Trp_Fru_FLP_F","CLK_TRPA1_M","CLK_TRPA1_F"))
+```
+
+#Supplemental Figure 14A
+```{r}
+
+Average_individual_daily_locomotor_activity <-filter(Average_individual_daily_locomotor_activity, Light_cycle == 'LD')
+#Box plot of individual locomotor activity in LD
+box_plot_LD<- ggplot(na.omit(Average_individual_daily_locomotor_activity), aes(x=Condition, y=mean_value, fill=Condition)) +
+geom_boxplot(alpha=0.7)+
+geom_point()+
+labs(title= "Activity per day in LD")+
+labs(y="Locomotor activity [counts/day]", x="") + #adds/removes axis lables
+theme_bw()+
+theme(legend.position="none")+
+theme(legend.text=element_text(size=16))+
+theme(legend.position="none")+
+theme(axis.text.x=element_text(angle=50, vjust=0.9, hjust=1, size=15, face="bold"))+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+theme(axis.text.y=element_text(vjust=0.9, hjust=1, size=11, face="bold"))+
+theme(axis.title.y = element_text(size=14))
+
+box_plot_LD
+```
+
+```{r}
+mat_keep_rows <- c("CS_M", "Trp_Fru_FLP_M", "CLK_TRPA1_M") 
+MaleSubset <- subset(Average_individual_daily_locomotor_activity_LD, Condition %in% mat_keep_rows)
+mat_keep_rows <- c("CS_F", "Trp_Fru_FLP_F", "CLK_TRPA1_F")
+FemaleSubset <- subset(Average_individual_daily_locomotor_activity_LD, Condition %in% mat_keep_rows)
+
+```
+
+
+```{r}
+model <- res.aov <- aov(mean_value ~ Condition,data=Average_individual_daily_locomotor_activity)
+summary(model)
+TukeyHSD(model)
+```
+
+
+#Supplemental Figure 14G
+```{r}
+Daytime_nighttime_activity<-read.csv("/Volumes/NO NAME/LDclkact/Daytime_nighttime_activity_in_LD-1.csv") 
+knitr::kable(head(Daytime_nighttime_activity))
+```
+#order the plot
+```{r}
+Daytime_nighttime_activity$Condition <-factor(Daytime_nighttime_activity$Condition,levels = c("CS_M","CS_F", "Trp_Fru_FLP_M","Trp_Fru_FLP_F","CLK_TRPA1_M","CLK_TRPA1_F"))
+
+```
+ 
+```{r}
+Daytime_nighttime_activity_plot <- ggplot(Daytime_nighttime_activity, aes(factor(Condition), Mean, fill = Light_status)) +
+geom_bar(stat="identity", position = "dodge", colour="black") +
+geom_errorbar(data=Daytime_nighttime_activity, aes(ymin=Mean - SEM, ymax=Mean + SEM),
+position = position_dodge(0.9), width=0.1) +
+scale_fill_manual(values=c("#E8E823", "#0472CC"))+
+theme_bw()+
+theme(legend.text=element_text(size=16))+
+theme(axis.text.x=element_text(angle=50, vjust=0.9, hjust=1, size=13, face="bold"))+
+labs(title= "Daytime vs nighttime activity in LD", size= 14)+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+theme(axis.text.y=element_text(vjust=0.9, hjust=1, size=11, face="bold"))+
+theme(axis.title.y = element_text(size=14))+
+theme(legend.title=element_blank())+
+theme(axis.title.x = element_blank())+
+labs(x="", y="Locomotor activity [counts/day]")
+
+Daytime_nighttime_activity_plot
+```
+ 
+ 
+Actograms
+#Supplemental Figure 14H-I
+```{r}
+Mean_and_median_actogram_data <- read.csv("/Volumes/NO NAME/LDclkact/Mean_and_median_actogram_data.csv") #Reads a csv file
+knitr::kable(head(Mean_and_median_actogram_data)) #Displays the first 6 rows of a data frame
+```
+
+# Setting plot settings as variables allows to easily edit the plot without searching for parameters deep in the function
+```{r}
+actogram_bin <- 5 # Plot bin size [min]
+data_recording_frequency <- 1 # Data acquisition frequency [min]
+Double_Single <- 'SP' # Select 'SP' for single plotted actograms, and 'DP' for double plotted
+ac_max_counts <- 5 # Max value of counts displayed on an actogram
+data_freq <- 1440 # Number of data records in a day, Set to 1440/5 if your DAM system saves counts every 5 min.
+mean_or_median_column <- "binned_mean" # Set to "binned_median" for median actogram
+```
+
+Make an object the same name as they use in the example for ease.
+```{r}
+mmf<-Mean_and_median_actogram_data
+mmf <- filter(Mean_and_median_actogram_data, Condition %in%unique(Mean_and_median_actogram_data$Condition)[1:6])
+```
+
+```{r fig.height=60, fig.width=20}
+# Function defining mean actogram plot
+mean_actogram <- ({function(x){
+# Binning actogram mean values - deccreases data resolution for plotting
+y <- filter(mmf, Condition==x)
+binning_value <- actogram_bin / data_recording_frequency #Generated a value for binning
+y$binned_mean <- rep(rollapply(y$mean, width = binning_value, by = binning_value,
+FUN = mean, align = "left"), each=binning_value)
+y$binned_median <- rep(rollapply(y$median, width = binning_value, by = binning_value,
+FUN = mean, align = "left"), each=binning_value)
+# Uses a plotting function for a single plotted actogram if Double_Single <- 'SP' is set by user
+if (Double_Single == 'SP') {
+ggplot(y, aes(Dec_time, y=get(mean_or_median_column), ymax=get(mean_or_median_column),
+ymin=min(get(mean_or_median_column)))) +
+geom_ribbon() +
+facet_grid(date ~ .)+
+geom_ribbon(fill="#0D226E") +
+labs(title= x, x= "", y = "Counts/recording frequency")+
+theme_bw()+
+scale_x_continuous(breaks = c(0, 360,720, 1080, (1440-data_recording_frequency)),
+labels=c("0 h", "6 h", "12 h", "18 h", "0 h")) +
+theme(axis.text=element_text(size=14))+
+theme(text = element_text(size=16))+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+coord_cartesian(ylim=c(0,as.numeric(ac_max_counts)))
+} else {
+# Uses a plotting function for a double plotted actogram if Double_Single <- 'DP' is set by the user
+# Well, actually any value other than 'SP' would do it
+# Thsese 3 lines double the actogram data
+b <- arrange(y, date, Dec_time)
+qqq <- lapply(unique(b$date), function(w) filter(b, date==w))
+zr1 <- do.call("rbind", replicate(2, qqq, simplify = T))
+# Generates a doubled dec time X scale
+zr1$Dec_time_double <- c(rep(1:data_freq, length(unique(zr1$date))),
+rep((data_freq+1):(data_freq*2), length(unique(zr1$date))))*data_recording_frequency
+zr2 <- arrange(zr1, date, Dec_time_double)
+zr3 <- zr2[(data_freq+1):nrow(zr2),] #drops the first repeated day
+zr3 <- arrange(zr3, date, Dec_time_double)
+
+#Generates another doubled dec time X scale after dropping the 1st day
+zr3$Dec_time_double2 <- ((c(rep(1:(data_freq*2), length(unique(zr3$date))))[1:nrow(zr3)])* data_recording_frequency)
+
+ggplot(zr3, aes(Dec_time_double2, y=get(mean_or_median_column), ymax=get(mean_or_median_column),
+ymin=min(get(mean_or_median_column)))) +
+theme_bw()+
+facet_grid(date2 ~ .)+
+geom_ribbon(fill="#0D226E") +
+labs(title= x, x= "", y = "Number of counts/recording frequency")+
+scale_x_continuous(breaks = c(1, 360,720, 1080, 1440, 1800, 2160, 2520, 2880),
+labels=c("0h", "6 h", "12 h", "18 h", "0 h", "6 h", "12 h", "18 h", "0 h"))+
+coord_cartesian(xlim=c(1,2880))+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+theme(axis.text=element_text(size=14))+
+theme(text = element_text(size=16))+
+coord_cartesian(ylim=c(0,as.numeric(ac_max_counts)))
+}
+}
+})
+# Assembles mean actograms using marrangeGrob
+plot<-marrangeGrob(lapply(unique(mmf$Condition), function(x) FUN=mean_actogram(x)),
+ncol=1, nrow = length(unique(mmf$Condition)), top ="")
+
+ggsave("multipage.pdf", plot, width = 10, height = 80, units = "in",limitsize = FALSE)
+
+
+```
+
+
+DD data actograms
+#Supplemental Figure 15A-B
+```{r}
+Mean_and_median_actogram_data <- read.csv("/Volumes/NO NAME/Clk856DDN/Mean_and_median_actogram_data(1).csv") #Reads a csv file
+knitr::kable(head(Mean_and_median_actogram_data)) #Displays the first 6 rows of a data frame
+```
+
+```{r}
+actogram_bin <- 5 # Plot bin size [min]
+data_recording_frequency <- 1 # Data acquisition frequency [min]
+Double_Single <- 'SP' # Select 'SP' for single plotted actograms, and 'DP' for double plotted
+ac_max_counts <- 5 # Max value of counts displayed on an actogram
+data_freq <- 1440 # Number of data records in a day, Set to 1440/5 if your DAM system saves counts every 5 min.
+mean_or_median_column <- "binned_mean" # Set to "binned_median" for median actogram
+```
+
+Make an object the same name as they use in the example for ease.
+```{r}
+mmf<-Mean_and_median_actogram_data
+mmf <- filter(Mean_and_median_actogram_data, Condition %in%unique(Mean_and_median_actogram_data$Condition)[1:6])
+```
+
+```{r fig.height=60, fig.width=20}
+# Function defining mean actogram plot
+mean_actogram <- ({function(x){
+# Binning actogram mean values - deccreases data resolution for plotting
+y <- filter(mmf, Condition==x)
+binning_value <- actogram_bin / data_recording_frequency #Generated a value for binning
+y$binned_mean <- rep(rollapply(y$mean, width = binning_value, by = binning_value,
+FUN = mean, align = "left"), each=binning_value)
+y$binned_median <- rep(rollapply(y$median, width = binning_value, by = binning_value,
+FUN = mean, align = "left"), each=binning_value)
+# Uses a plotting function for a single plotted actogram if Double_Single <- 'SP' is set by user
+if (Double_Single == 'SP') {
+ggplot(y, aes(Dec_time, y=get(mean_or_median_column), ymax=get(mean_or_median_column),
+ymin=min(get(mean_or_median_column)))) +
+geom_ribbon() +
+facet_grid(date ~ .)+
+geom_ribbon(fill="#0D226E") +
+labs(title= x, x= "", y = "Counts/recording frequency")+
+theme_bw()+
+scale_x_continuous(breaks = c(0, 360,720, 1080, (1440-data_recording_frequency)),
+labels=c("0 h", "6 h", "12 h", "18 h", "0 h")) +
+theme(axis.text=element_text(size=14))+
+theme(text = element_text(size=16))+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+coord_cartesian(ylim=c(0,as.numeric(ac_max_counts)))
+} else {
+# Uses a plotting function for a double plotted actogram if Double_Single <- 'DP' is set by the user
+# Well, actually any value other than 'SP' would do it
+# Thsese 3 lines double the actogram data
+b <- arrange(y, date, Dec_time)
+qqq <- lapply(unique(b$date), function(w) filter(b, date==w))
+zr1 <- do.call("rbind", replicate(2, qqq, simplify = T))
+# Generates a doubled dec time X scale
+zr1$Dec_time_double <- c(rep(1:data_freq, length(unique(zr1$date))),
+rep((data_freq+1):(data_freq*2), length(unique(zr1$date))))*data_recording_frequency
+zr2 <- arrange(zr1, date, Dec_time_double)
+zr3 <- zr2[(data_freq+1):nrow(zr2),] #drops the first repeated day
+zr3 <- arrange(zr3, date, Dec_time_double)
+
+#Generates another doubled dec time X scale after dropping the 1st day
+zr3$Dec_time_double2 <- ((c(rep(1:(data_freq*2), length(unique(zr3$date))))[1:nrow(zr3)])* data_recording_frequency)
+
+ggplot(zr3, aes(Dec_time_double2, y=get(mean_or_median_column), ymax=get(mean_or_median_column),
+ymin=min(get(mean_or_median_column)))) +
+theme_bw()+
+facet_grid(date2 ~ .)+
+geom_ribbon(fill="#0D226E") +
+labs(title= x, x= "", y = "Number of counts/recording frequency")+
+scale_x_continuous(breaks = c(1, 360,720, 1080, 1440, 1800, 2160, 2520, 2880),
+labels=c("0h", "6 h", "12 h", "18 h", "0 h", "6 h", "12 h", "18 h", "0 h"))+
+coord_cartesian(xlim=c(1,2880))+
+theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+theme(axis.text=element_text(size=14))+
+theme(text = element_text(size=16))+
+coord_cartesian(ylim=c(0,as.numeric(ac_max_counts)))
+}
+}
+})
+# Assembles mean actograms using marrangeGrob
+plot<-marrangeGrob(lapply(unique(mmf$Condition), function(x) FUN=mean_actogram(x)),
+ncol=1, nrow = length(unique(mmf$Condition)), top ="")
+
+ggsave("multipage.pdf", plot, width = 10, height = 80, units = "in",limitsize = FALSE)
+
+
+```
+
+## Mean periodograms
+#Supplemental Figure15C
+```{r, warning=FALSE, message=FALSE}
+
+Mean_period_by_condition_rhythmic <- read.csv("/Volumes/NO NAME/Clk856DDN/Mean_periodograms_data.csv") #Reads a csv file
+
+knitr::kable(head(Mean_period_by_condition_rhythmic)) #Displays the first 6 rows of a data frame
+```
+Order list 
+```{r}
+
+Mean_period_by_condition_rhythmic$Condition <-factor(Mean_period_by_condition_rhythmic$Condition,levels = c("CS_M","CS_F", "Trp_Fru_FLP_M","Trp_Fru_FLP_F","CLK_TRPA1_M","CLK_TRPA1_F"))
+```
+
+
+
+#### Column description:
+
+* X - row index
+* Condition - a user-defined name of an experimental condition
+* Period - period tested by the Chi-Square algorithm [hours]
+* Mean_Qp.act - Mean Chi-Square Qp.act value across all rhythmic individuals in a condition
+* SEM_Qp.act - SEM of the Mean_Qp.act
+* N_of_rhythmic_flies - number of rhythmic flies passing the Qp.act/Qp.sig threshold
+* Mean_Qp.sig - Chi-Square Qp.sig period significance threshold
+* Mean_Qp.act_Qp.sig_ratio - Ratio of Mean_Qp.act / Mean_Qp.sig. Values used for calling the strongest peak.
+* SEM_Qp.act_Qp.sig_ratio - SEM of the Mean_Qp.act_Qp.sig_ratio
+\newline
+
+```{r, fig.height = 5, fig.width = 9, fig.align = 'center', warning=FALSE, message=FALSE}
+#Overlapping mean periodograms
+
+ Mean_periodograms_plot_overlapping <- ggplot(Mean_period_by_condition_rhythmic, 
+                                              aes(x=Period, y=Mean_Qp.act, colour = Condition)) + 
+      geom_point()+
+      geom_line()+
+      geom_line(data=Mean_period_by_condition_rhythmic, aes(x=Period, y = Mean_Qp.sig), size=0.5, colour="black")+
+      theme_bw()+
+      labs(x="Circadian Period [h]", y="Mean Qp.act")+
+      theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+      scale_x_continuous(breaks = seq(4, 56, 2)) +
+      geom_vline(xintercept = 24, linetype = 2 ) +
+      theme(legend.text=element_text(size=18))+
+      theme(legend.title = element_text(size=18))+
+      theme(axis.text.x=element_text(hjust=0.5, size=15, face="bold"))+
+      theme(axis.text.y=element_text(hjust=0.5, size=15, face="bold"))+
+      theme(axis.title=element_text(size=18))+
+      guides(colour = guide_legend(override.aes = list(size=1))) + 
+      geom_ribbon(aes(ymin=Mean_Qp.act-SEM_Qp.act, ymax=Mean_Qp.act+SEM_Qp.act), linetype=1, alpha=0.01)
+    
+      #scale_colour_manual(values=c("blue", "red")) # Add this line to customize colors
+ 
+ 
+Mean_periodograms_plot_overlapping
+
+```
+## Period peaks
+#Supplemental Figure15D
+```{r, warning=FALSE, message=FALSE}
+
+Indivdual_fly_period_peaks_data <- read.csv("/Volumes/NO NAME/Clk856DDN/Individual_fly_period_peaks.csv")
+
+knitr::kable(head(Indivdual_fly_period_peaks_data))  
+  
+```
+
+
+
+Order list 
+```{r}
+
+Indivdual_fly_period_peaks_data$Condition <-factor(Indivdual_fly_period_peaks_data$Condition,levels = c("CS_M","CS_F", "Trp_Fru_FLP_M","Trp_Fru_FLP_F","CLK_TRPA1_M","CLK_TRPA1_F"))
+```
+
+
+#### Column description:
+* X - row index
+* Condition - a user-defined name of an experimental condition
+* channel - DAM system channel
+* Period - Chi-Square Period peak [hours] of an individual
+* Qp.act - Chi-Square Qp.act period peak value of an individual
+* Qp.sig - Chi-Square Qp.sig period peak significance threshold
+* Act_Sig_ratio - Qp.act/Qp.sig ratio. Provides information about the period strength 
+\newline
+
+```{r, fig.height = 5, fig.width = 5, fig.align = 'center', warning=FALSE, message=FALSE}
+
+# Period peaks boxplot
+
+ ind_periods<- ggplot(na.omit(Indivdual_fly_period_peaks_data), aes(x=Condition, y=Period, colour = Condition)) +
+      geom_boxplot(alpha=0.7)+
+      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 0.5, aes(fill=Condition))+
+      labs(y="Circadian Period [h]", x="") +  #adds/removes axis lables
+      theme(legend.title=element_blank())+ #removes legend title
+      theme_bw()+
+      theme(axis.text.x=element_text(angle=50, hjust=1, size=18, face="bold"))+
+      theme(axis.text.y=element_text(hjust=1, size=16, face="bold"))+
+      theme(axis.title.y = element_text(color="black", size=18))+         #axis title
+      theme(legend.title = element_blank())+
+      theme(legend.text = element_text(size=18))+
+      labs(title= "Circadian period peaks")+
+      theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+      theme(legend.position="none")
+
+ind_periods
+```
+
+
+#Supplemental Figure15E
+```{r, fig.height = 5, fig.width = 5, fig.align = 'center', warning=FALSE, message=FALSE}
+
+# Box plot of individual Period strengths  
+
+    ind_strength<- ggplot(na.omit(Indivdual_fly_period_peaks_data), aes(x=Condition, y=Act_Sig_ratio, colour = Condition)) +
+      geom_boxplot(alpha=0.7)+
+      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 0.5, aes(fill=Condition))+
+      labs(y="Qp.act/Qp.sig", x="") +  #adds/removes axis lables
+      theme(legend.title=element_blank())+ #removes legend title
+      theme_bw()+
+      theme(axis.text.x=element_text(angle=50, hjust=1, size=18, face="bold"))+
+      theme(axis.text.y=element_text(hjust=1, size=16, face="bold"))+
+      theme(axis.title.y = element_text(color="black", size=18))+         #axis title
+      theme(legend.title = element_blank())+
+      theme(legend.text = element_text(size=18))+
+      labs(title= "Circadian period strength")+
+      theme(plot.title = element_text(size = rel(2), hjust=0.5))+
+      theme(legend.position="none")
+    
+    ind_strength
+
+```
+
