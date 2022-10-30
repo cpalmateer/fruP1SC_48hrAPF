@@ -1,0 +1,3748 @@
+---
+title: "Main Data Analysis"
+output: html_notebook
+---
+
+Launch the Seurat library and others necessary
+```{r}
+library(Seurat)
+library(dplyr)
+library(cowplot)
+library(pheatmap)
+library(RColorBrewer)
+library(colorspace)
+library(ggcorrplot)
+library(corrr)
+library(eulerr)
+library(data.table)
+```
+
+The FACS sorted data consists of 2 male replicates and 2 female replicates
+
+Bring in the raw data from the 10X CellRanger mapping that I pulled off of the HPC using direct stfp. 
+```{r}
+data_dir <- '/home/cpalmateer/Desktop/48MaleRep1_NEW/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+Malerep1data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+```
+
+
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+# Supplemental Figure 1E-F
+MR1 indicates male repliate 1
+```{r}
+MR1 <- CreateSeuratObject(counts = Malerep1data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+MR1
+```
+
+
+MR2 indicates male repliate 2 (Originally called male rep3)
+```{r}
+data_dir <- '/home/cpalmateer/Desktop/48MaleRep3/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+Malerep2data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+MR2 <- CreateSeuratObject(counts = Malerep2data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+MR2 
+```
+4388 cells 
+
+FR1 indicates female repliate 1
+```{r}
+data_dir <- '/media/cpalmateer/DATA/Single Cell_Run 3_female reps_CMP/48APFFemaleRepD6/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+Femalerep2data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+FR1 <- CreateSeuratObject(counts = Femalerep2data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+FR1
+```
+7863 cells
+
+
+FR2 indicates female repliate 2
+```{r}
+data_dir <- '/media/cpalmateer/DATA/Single Cell_Run 3_female reps_CMP/48APFFemaleRepD7/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+Femalerep3data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+FR2<- CreateSeuratObject(counts = Femalerep3data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+FR2
+```
+10,149 cells
+
+Add meta data prior to filtering for unfiltered QC plots
+Start adding replicate meta data to co-analyze
+```{r}
+MR1$replicate<-sample(c("MR1"), size = ncol(MR1), replace = TRUE)
+MR2$replicate<-sample(c("MR2"), size = ncol(MR2), replace = TRUE)
+```
+
+Females
+```{r}
+FR1$replicate<-sample(c("FR1"), size = ncol(FR1), replace = TRUE)
+FR2$replicate<-sample(c("FR2"), size = ncol(FR2), replace = TRUE)
+```
+
+Calculate mitchondrial gene expression pct for QC plots:
+```{r}
+MR1[["percent.mt"]] <- PercentageFeatureSet(MR1, pattern = "mt")
+MR2[["percent.mt"]] <- PercentageFeatureSet(MR2, pattern = "mt")
+FR1[["percent.mt"]] <- PercentageFeatureSet(FR1, pattern = "mt")
+FR2[["percent.mt"]] <- PercentageFeatureSet(FR2, pattern = "mt")
+```
+
+Now I'll merge the replicate data to run all data together
+```{r}
+MaleMerge<-merge(MR1, y = MR2, add.cell.ids = c("MR1", "MR2"), project = "48hrAPF")
+```
+
+```{r}
+FemaleMerge <- merge(FR1, y = FR2, add.cell.ids = c("FR1", "FR2"), project = "48hrAPF")
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+MaleMerge$sex<-sample(c("Male"), size = ncol(MaleMerge), replace = TRUE)
+FemaleMerge$sex<-sample(c("Female"), size = ncol(FemaleMerge), replace = TRUE)
+```
+
+```{r}
+MergeUnfiltered<-merge(MaleMerge, y = FemaleMerge, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+#Figure 1- Figure supplement 1A
+```{r}
+Idents(MergeUnfiltered) <- "replicate"
+VlnPlot(MergeUnfiltered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3
+```
+
+#Figure 1- Figure supplement 1B
+```{r}
+Idents(MergeUnfiltered) <- "sex"
+VlnPlot(MergeUnfiltered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3
+```
+
+#Figure 1- Figure supplement 1E-F
+Data Filtering:
+Run the QC steps on everything individually. 
+```{r}
+MR1[["percent.mt"]] <- PercentageFeatureSet(MR1, pattern = "mt")
+```
+
+```{r}
+VlnPlot(MR1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+Using these QC metrics, I'll filter out cells
+
+    We filter cells that have unique feature counts over 4,000 or less than 200
+    We filter cells that have >5% mitochondrial counts
+    nCount_RNA < 20000
+    
+```{r fig.height=5, fig.width=10}
+plot1 <- FeatureScatter(MR1, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(MR1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+```{r}
+MR1 <- subset(MR1, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+MR1
+```
+3644 cells
+
+
+```{r fig.height=5, fig.width=10}
+MR2[["percent.mt"]] <- PercentageFeatureSet(MR2, pattern = "mt")
+VlnPlot(MR2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(MR2, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(MR2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+
+```{r}
+MR2 <- subset(MR2, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+MR2
+```
+4,344 cells 
+
+7,988 male cells in total
+
+For female cells
+```{r fig.height=5, fig.width=10}
+FR1[["percent.mt"]] <- PercentageFeatureSet(FR1, pattern = "mt")
+VlnPlot(FR1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(FR1, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(FR1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+```{r}
+FR1 <- subset(FR1, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+FR1
+```
+7,620 cells
+
+```{r fig.height=5, fig.width=10}
+FR2[["percent.mt"]] <- PercentageFeatureSet(FR2, pattern = "mt")
+VlnPlot(FR2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(FR2, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(FR2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+
+```{r}
+FR2 <- subset(FR2, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+FR2
+```
+9910 cells
+
+17,531 total female cells
+
+Cell totals after filtering:
+7,988 total male cells
+
+17,530 total female cells
+
+Start adding replicate meta data to co-analyze filtered data for analysis
+```{r}
+MR1$replicate<-sample(c("MR1"), size = ncol(MR1), replace = TRUE)
+MR2$replicate<-sample(c("MR2"), size = ncol(MR2), replace = TRUE)
+```
+
+Females
+```{r}
+FR1$replicate<-sample(c("FR1"), size = ncol(FR1), replace = TRUE)
+FR2$replicate<-sample(c("FR2"), size = ncol(FR2), replace = TRUE)
+```
+
+Now I'll merge the replicate data to run all data together
+```{r}
+MaleMerge<-merge(MR1, y = MR2, add.cell.ids = c("MR1", "MR2"), project = "48hrAPF")
+```
+
+```{r}
+FemaleMerge <- merge(FR1, y = FR2, add.cell.ids = c("FR1", "FR2"), project = "48hrAPF")
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+MaleMerge$sex<-sample(c("Male"), size = ncol(MaleMerge), replace = TRUE)
+FemaleMerge$sex<-sample(c("Female"), size = ncol(FemaleMerge), replace = TRUE)
+```
+
+```{r}
+Merge<-merge(MaleMerge, y = FemaleMerge, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+```{r}
+saveRDS(FemaleMerge, file = "FemaleMerge2.rds")
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+```{r}
+FemaleMerge<-readRDS("~/Documents/Colleen's R-Notebooks/FemaleMerge2.rds")
+MaleMerge<-readRDS("~/Documents/Colleen's R-Notebooks/MaleMerge2.rds")
+```
+
+#Figure 1- Figure supplement 1C
+```{r}
+Idents(MergeUnfiltered) <- "replicate"
+VlnPlot(MergeUnfiltered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3
+```
+
+#Figure 1- Figure supplement 1D
+```{r}
+Idents(MergeUnfiltered) <- "sex"
+VlnPlot(MergeUnfiltered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3
+```
+
+#Source data 1
+Filtered cell gene and transcript medians:
+Male
+```{r}
+MaleMergeNfetures<-(MaleMerge@meta.data$nFeature_RNA)
+```
+
+```{r}
+median(MaleMergeNfetures)
+```
+
+```{r}
+MaleMergeNCount<-(MaleMerge@meta.data$nCount_RNA)
+```
+
+```{r}
+median(MaleMergeNCount)
+```
+
+Female
+```{r}
+FemaleMergeNfetures<-(FemaleMerge@meta.data$nFeature_RNA)
+```
+
+```{r}
+median(FemaleMergeNfetures)
+```
+
+```{r}
+FemaleMergeNCount<-(FemaleMerge@meta.data$nCount_RNA)
+```
+
+```{r}
+median(FemaleMergeNCount)
+```
+
+```{r}
+MergeNfetures<-(Merge@meta.data$nFeature_RNA)
+```
+
+```{r}
+median(MergeNfetures)
+```
+
+```{r}
+MergeNCount<-(Merge@meta.data$nCount_RNA)
+```
+
+```{r}
+median(MergeNCount)
+```
+
+#Male and Female Data set Analysis:
+
+Normalize the data
+After removing unwanted cells from the dataset, the next step is to normalize the data. By default, we employ a global-scaling normalization method “LogNormalize” that normalizes the feature expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result.
+```{r}
+MaleMerge <- NormalizeData(MaleMerge, normalization.method = "LogNormalize", scale.factor = 10000)
+FemaleMerge <- NormalizeData(FemaleMerge, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+Identification of highly variable features (feature selection)
+
+```{r}
+MaleMerge <- FindVariableFeatures(MaleMerge, selection.method = "vst", nfeatures = 2000)
+FemaleMerge <- FindVariableFeatures(FemaleMerge, selection.method = "vst", nfeatures = 2000)
+```    
+```{r fig.height=5, fig.width=10}
+# Identify the 10 most highly variable genes
+top10M <- head(VariableFeatures(MaleMerge), 10)
+top10F <- head(VariableFeatures(FemaleMerge), 10)
+# plot variable features with and without labels
+plot1M <- VariableFeaturePlot(MaleMerge)
+plot2M <- LabelPoints(plot = plot1M, points = top10M, repel = TRUE)
+CombinePlots(plots = list(plot1M, plot2M))
+# plot variable features with and without labels
+plot1F <- VariableFeaturePlot(FemaleMerge)
+plot2F <- LabelPoints(plot = plot1F, points = top10F, repel = TRUE)
+CombinePlots(plots = list(plot1F, plot2F))
+```
+
+Scaling the data
+
+Next, we apply a linear transformation (‘scaling’) that is a standard pre-processing step prior to dimensional reduction techniques like PCA. The ScaleData function:
+
+    Shifts the expression of each gene, so that the mean expression across cells is 0
+    Scales the expression of each gene, so that the variance across cells is 1
+        This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+        
+```{r}
+all.genesM <- rownames(MaleMerge)
+MaleMerge <- ScaleData(MaleMerge, features = all.genesM)
+all.genesF <- rownames(FemaleMerge)
+FemaleMerge <- ScaleData(FemaleMerge, features = all.genesF)
+```
+Perform linear dimensional reduction
+
+Next we perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using features argument if you wish to choose a different subset.
+```{r}
+MaleMerge<- RunPCA(MaleMerge, features = VariableFeatures(object = MaleMerge), npcs = 150)
+FemaleMerge<- RunPCA(FemaleMerge, features = VariableFeatures(object = FemaleMerge), npcs = 150)
+```
+
+
+```{r}
+# Examine and visualize PCA results a few different ways
+print(MaleMerge[["pca"]], dims = 1:5, nfeatures = 5)
+print(FemaleMerge[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+```{r}
+VizDimLoadings(MaleMerge, dims = 1:2, reduction = "pca")
+VizDimLoadings(FemaleMerge, dims = 1:2, reduction = "pca")
+```
+
+
+```{r fig.height=15, fig.width=20}
+DimHeatmap(MaleMerge, dims = 1:15, cells = 500, balanced = TRUE)
+DimHeatmap(FemaleMerge, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+Determine the ‘dimensionality’ of the dataset
+
+We implemment JackStraw procedure in Seurtat described in Macosko et al. Randomly permute a subset of the data (1% by default) and rerun PCA, constructing a ‘null distribution’ of feature scores, and repeat this procedure. We identify ‘significant’ PCs as those who have a strong enrichment of low p-value features.
+
+# NOTE: This process can take a long time for big datasets
+Run this over multiple compute cores on machine
+```{r}
+library(future)
+plan()
+plan("multiprocess", workers = 6)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+```{r}
+MaleMerge <- JackStraw(MaleMerge, num.replicate = 100,dims = 150)
+MaleMerge<- ScoreJackStraw(MaleMerge, dims = 1:150)
+FemaleMerge <- JackStraw(FemaleMerge, num.replicate = 100, dims = 150)
+FemaleMerge<- ScoreJackStraw(FemaleMerge, dims = 1:150)
+```
+
+The JackStrawPlot function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). ‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line). 
+
+#Figure 1- Figure supplement 2A and B:
+```{r fig.height=5, fig.width=10}
+JackStrawPlot(MaleMerge, dims = 1:150)
+JackStrawPlot(FemaleMerge, dims = 1:150)
+```
+80 for males
+104 for females
+
+Cluster the cells
+Running multiple different clustering resolutions
+```{r}
+MaleMerge <- FindNeighbors(MaleMerge, dims = 1:80)
+MaleMerge <- FindClusters(MaleMerge, resolution = c(0.5,0.7,1,1.5,2,2.5,3,3.2))
+FemaleMerge <- FindNeighbors(FemaleMerge, dims = 1:104)
+FemaleMerge <- FindClusters(FemaleMerge, resolution = c(0.2,0.5,0.7,1,1.5,2,2.5))
+```
+
+Run non-linear dimensional reduction (UMAP/tSNE)
+
+```{r}
+MaleMerge <- RunUMAP(MaleMerge, dims = 1:80)
+FemaleMerge<- RunUMAP(FemaleMerge, dims = 1:104)
+```
+
+Compare cluster resolutions in cluster trees:
+#Figure 1- Figure supplement 3B
+```{r}
+clustTreePlotmale <- clustree(MaleMerge, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlotmale
+```
+#Figure 1- Figure supplement 3D
+```{r}
+clustTreePlotfemale <- clustree(FemaleMerge, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlotfemale
+```
+
+#Figure 1- Figure supplement 3A and 3C
+#Figure 1- Figure supplement 4C and 4D (cluster key for heatmaps)
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+DimPlot(MaleMerge, reduction = "umap")
+DimPlot(FemaleMerge, reduction = "umap")
+```
+
+UMAPs by replicate
+#Figure 1- Figure supplement 1G and H
+```{r}
+Idents(MaleMerge) <- "replicate"
+DimPlot(MaleMerge, reduction = "umap")
+Idents(FemaleMerge) <- "replicate"
+DimPlot(FemaleMerge, reduction = "umap")
+```
+That is highly consistant overlap. 
+
+#Source data 2
+Male cells in each cluster by replicate
+```{r}
+cellsperclustermalereps<-table(Idents(MaleMerge),MaleMerge$replicate)
+cellsperclustermalereps
+fwrite(x = cellsperclustermalereps, file = "Cellsperclustermalereps.csv")
+```
+
+Female cells in each cluster by replicate
+```{r}
+cellsperclusterfemalereps<-table(Idents(FemaleMerge),FemaleMerge$replicate)
+cellsperclusterfemalereps
+fwrite(x = cellsperclusterfemalereps, file = "Cellsperclusterfemalereps.csv")
+```
+
+#Source data 3
+Male cluster marker genes
+```{r}
+MaleMerge.markers <- FindAllMarkers(MaleMerge, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+MaleMerge.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+data_to_write_out <- as.data.frame(as.matrix(MaleMerge.markers))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "MalemarkersAllclusters80PC3res.csv")
+```
+
+#Source data 3
+Female cluster marker genes
+```{r}
+FemaleMerge.markers <- FindAllMarkers(FemaleMerge, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+FemaleMerge.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+data_to_write_out <- as.data.frame(as.matrix(FemaleMerge.markers))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "FemalemarkersAllclusters104PC0.7res.csv")
+```
+
+Top 10 marker gene heatmap for male data set
+#Figure 1- Figure supplement 4E
+```{r}
+top10 <- MaleMerge.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+DoHeatmap(MalaleMerge, features = top10$gene) + NoLegend()
+top10clusterheatmap<-DoHeatmap(MaleMerge, features = top10$gene, label=FALSE)+  scale_fill_gradientn(colors = RColorBrewer::brewer.pal(n = 10, name = "RdBu"))  + NoLegend()
+top10clusterheatmap
+```
+
+Top 10 marker gene heatmap for female data set
+#Figure 1- Figure supplement 4F
+```{r}
+top10 <- FemaleMerge.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+DoHeatmap(FemaleMerge, features = top10$gene) + NoLegend()
+top10clusterheatmap<-DoHeatmap(FemaleMerge, features = top10$gene, label=FALSE)+  scale_fill_gradientn(colors = RColorBrewer::brewer.pal(n = 10, name = "RdBu"))  + NoLegend()
+top10clusterheatmap
+```
+
+
+#Figure 1- Figure supplement 6
+roX expression in Male and Female data sets
+#Figure 1- Figure supplement 6C-D
+```{r}
+FeaturePlot(MaleMerge, features = c("roX1", "roX2"), min.cutoff = "q0")
+```
+
+#Source 2
+```{r}
+MaleRox1 <- subset(MaleMerge, subset = roX1 > 0)
+```
+7315 cells
+
+```{r}
+MaleRox2 <- subset(MaleMerge, subset = roX2 > 0)
+```
+6767 cells
+
+#Figure 1- Figure supplement 6E-F
+```{r}
+FeaturePlot(FemaleMerge, features = c("roX1", "roX2"), min.cutoff = "q0")
+```
+
+#Source data 2
+```{r}
+FemaleRox1 <- subset(FemaleMerge, subset = roX1 > 0)
+```
+557 cells
+
+```{r}
+FemaleRox2 <- subset(FemaleMerge, subset = roX2 > 0)
+```
+333 cells
+
+
+GFP and fru expression per sex
+#Source data 2
+```{r}
+Malefru <- subset(MaleMerge, subset = fru > 0)
+```
+
+```{r}
+MaleGFP <- subset(MaleMerge, subset = GFP > 0)
+```
+
+```{r}
+Femalefru <- subset(FemaleMerge, subset = fru > 0)
+```
+
+```{r}
+FemaleGFP <- subset(FemaleMerge, subset = GFP > 0)
+```
+
+Cell cycle gene expression per sex
+#Source data 2
+
+```{r}
+Malestg <- subset(MaleMerge, subset = stg > 0)
+```
+
+```{r}
+Femalestg <- subset(FemaleMerge, subset = stg > 0)
+```
+
+
+Neuronal gene expression per sex
+#SSource data 2
+```{r}
+Malelav <- subset(MaleMerge, subset = elav > 0)
+```
+
+```{r}
+MalenSyb <- subset(MaleMerge, subset = nSyb > 0)
+```
+
+```{r}
+Malenoe <- subset(MaleMerge, subset = noe > 0)
+```
+
+```{r}
+Femalelav <- subset(FemaleMerge, subset = elav > 0)
+```
+
+```{r}
+FemalenSyb <- subset(FemaleMerge, subset = nSyb > 0)
+```
+
+```{r}
+Femalenoe <- subset(FemaleMerge, subset = noe > 0)
+```
+
+Cell proportion calculations:
+Function from:
+
+Import function
+```{r}
+PrctCellExpringGene <- function(object, genes, group.by = "all"){
+    if(group.by == "all"){
+        prct = unlist(lapply(genes,calc_helper, object=object))
+        result = data.frame(Markers = genes, Cell_proportion = prct)
+        return(result)
+    }
+
+    else{        
+        list = SplitObject(object, group.by)
+        factors = names(list)
+
+        results = lapply(list, PrctCellExpringGene, genes=genes)
+        for(i in 1:length(factors)){
+        results[[i]]$Feature = factors[i]
+        }
+        combined = do.call("rbind", results)
+        return(combined)
+    }
+}
+
+calc_helper <- function(object,genes){
+    counts = object[['RNA']]@counts
+    ncells = ncol(counts)
+    if(genes %in% row.names(counts)){
+    sum(counts[genes,]>0)/ncells
+    }else{return(NA)}
+}
+```
+
+#Source data 2
+```{r}
+PrctCellExpringGene(MaleMerge ,genes =c("fru", "GFP", "elav","nSyb", "noe"))
+PrctCellExpringGene(FemaleMerge ,genes =c("fru", "GFP", "elav","nSyb", "noe"))
+```
+
+Full Data set analysis:
+```{r}
+Merge<-readRDS("~/Documents/Colleen's R-Notebooks/Merge2.rds")
+```
+
+Normalize
+```{r}
+Merge <- NormalizeData(Merge, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+Merge <- FindVariableFeatures(Merge, selection.method = "vst", nfeatures = 2000)
+```
+Have to re-scale
+```{r}
+all.genesM <- rownames(Merge)
+Merge <- ScaleData(Merge, features = all.genesM)
+```
+
+Run PCA
+```{r}
+Merge<- RunPCA(Merge, features = VariableFeatures(object = Merge), npcs = 150)
+```
+
+Run Jackstraw
+```{r}
+Merge <- JackStraw(Merge, num.replicate = 100,dims = 150)
+Merge<- ScoreJackStraw(Merge, dims = 1:150)
+```
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+#Figure 1 - figure supplement 3C
+```{r}
+JackStrawPlot(Merge, dims = 1:150)
+```
+107 PCs
+
+Run the clustering
+```{r}
+Merge <- FindNeighbors(Merge, dims = 1:107)
+Merge <- FindClusters(Merge, resolution = c(0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+```
+Run UMAP
+```{r}
+Merge <- RunUMAP(Merge, dims = 1:107)
+```
+After evaluation, delete some resolutions for figure plotting
+```{r}
+columns.to.remove <- c("RNA_snn_res.1", "RNA_snn_res.1.3", "RNA_snn_res.2", "seurat_clusters", "RNA_snn_res.0.1", "RNA_snn_res.0.2", "RNA_snn_res.0.3")
+for(i in columns.to.remove) {
+  Merge[[i]] <- NULL
+}
+```
+
+
+Make a multires UMAP panel
+#Figure 1 - figure supplement 4A
+```{r}
+Idents(Merge) <-"RNA_snn_res.0.5"
+p1<-DimPlot(Merge, reduction = "umap",label=TRUE) & NoAxes() & NoLegend() 
+Idents(Merge) <-"RNA_snn_res.0.7"
+p2<-DimPlot(Merge, reduction = "umap",label=TRUE) & NoAxes() & NoLegend() 
+Idents(Merge) <-"RNA_snn_res.1.2"
+p3<-DimPlot(Merge, reduction = "umap",label=TRUE) & NoAxes() & NoLegend() 
+
+
+plot_grid(p2, p1, p3, ncol=3)
+```
+
+
+#Figure 1 - figure supplement 1B
+```{r}
+clustTreePlot <- clustree(Merge, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlot
+```
+
+Make the UMAP plot
+#Figure 1 - figure supplement 4E
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+DimPlot(Merge, reduction = "umap")
+```
+
+
+#Source data 2 and 3
+Cells per cluster per sex
+```{r}
+cellsperclustersex<-table(Idents(Merge),Merge$sex)
+cellsperclustersex
+```
+
+```{r}
+fwrite(x = cellsperclustersex, file = "Clustersbysex.csv")
+```
+
+#Source data 2
+Cells per cluster per replicate
+```{r}
+cellsperclusterrep<-table(Idents(Merge),Merge$replicate)
+cellsperclusterrep
+```
+
+```{r}
+fwrite(x = cellsperclusterrep, file = "Clustersbyrep.csv")
+```
+
+#Source data 2
+```{r}
+Mergefru <- subset(Merge, subset = fru > 0)
+```
+
+```{r}
+MergeGFP <- subset(Merge, subset = GFP > 0)
+```
+
+```{r}
+Mergeelav <- subset(Merge, subset = elav > 0)
+```
+
+```{r}
+MergenSyb <- subset(Merge, subset = nSyb > 0)
+```
+
+```{r}
+Mergeenoe <- subset(Merge, subset = noe > 0)
+```
+
+```{r}
+PrctCellExpringGene(Merge ,genes =c("fru","GFP","elav","nSyb", "noe"))
+```
+
+#Doublet finder analysis: Source data 3
+```{r}
+remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
+```
+
+```{r}
+library(DoubletFinder)
+```
+#Importing original 10x matrices for this analysis
+```{r}
+data_dir <- '/home/cpalmateer/Desktop/48MaleRep1_NEW/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+```
+
+```{r}
+Malerep1data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+```
+
+```{r}
+MR1 <- CreateSeuratObject(counts = Malerep1data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+MR1
+```
+
+```{r}
+Malerep2data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+MR2 <- CreateSeuratObject(counts = Malerep2data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+MR2 
+```
+
+```{r}
+data_dir <- '/media/cpalmateer/DATA/Single Cell_Run 3_female reps_CMP/48APFFemaleRepD6/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+```
+
+```{r}
+Femalerep2data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+FR1 <- CreateSeuratObject(counts = Femalerep2data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+FR1
+```
+
+```{r}
+data_dir <- '/media/cpalmateer/DATA/Single Cell_Run 3_female reps_CMP/48APFFemaleRepD7/outs/filtered_feature_bc_matrix'
+list.files(data_dir)
+```
+
+```{r}
+Femalerep3data_new <- Read10X(data.dir = data_dir, gene.column = 2)
+# Initialize the Seurat object with the raw (non-normalized data).  Keep all
+# genes expressed in >= 3 cells (~0.1% of the data). Keep all cells with at
+# least 200 detected genes
+FR2<- CreateSeuratObject(counts = Femalerep3data_new, min.cells = 3, min.features = 200, 
+                           project = "48hrAPF")
+FR2
+```
+
+#Perform outlier removal of doublets as done previously for each replicate
+```{r}
+MR1 <- subset(MR1, subset = nFeature_RNA > 200 & percent.mt < 5)
+MR1
+MR2 <- subset(MR2, subset = nFeature_RNA > 200 & percent.mt < 5)
+MR2
+FR1 <- subset(FR1, subset = nFeature_RNA > 200 & percent.mt < 5)
+FR1
+FR2 <- subset(FR2, subset = nFeature_RNA > 200 & percent.mt < 5)
+FR2
+```
+
+#Normalize and scale the data as previously done
+```{r}
+MR1 <- NormalizeData(MR1, normalization.method = "LogNormalize", scale.factor = 10000)
+MR2 <- NormalizeData(MR2, normalization.method = "LogNormalize", scale.factor = 10000)
+MR1 <- FindVariableFeatures(MR1, selection.method = "vst", nfeatures = 2000)
+MR2 <- FindVariableFeatures(MR2, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+all.genesMR1 <- rownames(MR1)
+MR1 <- ScaleData(MR1, features = all.genesMR1)
+all.genesMR2 <- rownames(MR2)
+MR2 <- ScaleData(MR2, features = all.genesMR2)
+```
+#Run PCA
+```{r}
+MR1<- RunPCA(MR1, features = VariableFeatures(object = MR1), npcs = 100)
+MR1 <- JackStraw(MR1, num.replicate = 100,dims = 100)
+MR1<- ScoreJackStraw(MR1, dims = 1:100)
+JackStrawPlot(MR1, dims = 1:100)
+```
+
+```{r}
+MR2<- RunPCA(MR2, features = VariableFeatures(object = MR2), npcs = 100)
+MR2 <- JackStraw(MR2, num.replicate = 100, dims = 100)
+MR2<- ScoreJackStraw(MR2, dims = 1:100)
+JackStrawPlot(MR2, dims = 1:100)
+```
+
+```{r}
+MR1<- FindNeighbors(object = MR1, dims = 1:63)
+MR2<- FindNeighbors(object = MR2, dims = 1:59)
+MR1 <- FindClusters(object = MR1)
+MR2<- FindClusters(object = MR2)
+MR1 <- RunUMAP(object = MR1, dims = 1:63)
+MR2 <- RunUMAP(object = MR2, dims = 1:59)
+```
+
+#Normalize and scale the data as previously done
+```{r}
+FR1 <- NormalizeData(FR1, normalization.method = "LogNormalize", scale.factor = 10000)
+FR2 <- NormalizeData(FR2, normalization.method = "LogNormalize", scale.factor = 10000)
+FR1 <- FindVariableFeatures(FR1, selection.method = "vst", nfeatures = 2000)
+FR2 <- FindVariableFeatures(FR2, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+all.genesFR1 <- rownames(FR1)
+FR1 <- ScaleData(FR1, features = all.genesFR1)
+all.genesFR2 <- rownames(FR2)
+FR2 <- ScaleData(FR2, features = all.genesFR2)
+```
+#Run PCA
+```{r}
+FR1<- RunPCA(FR1, features = VariableFeatures(object = FR1), npcs = 100)
+FR1 <- JackStraw(FR1, num.replicate = 100,dims = 100)
+FR1<- ScoreJackStraw(FR1, dims = 1:100)
+JackStrawPlot(FR1, dims = 1:100)
+```
+
+```{r}
+FR2<- RunPCA(FR2, features = VariableFeatures(object = FR2), npcs = 100)
+FR2 <- JackStraw(FR2, num.replicate = 100, dims = 100)
+FR2<- ScoreJackStraw(FR2, dims = 1:100)
+JackStrawPlot(FR2, dims = 1:100)
+```
+
+```{r}
+FR1<- FindNeighbors(object = FR1, dims = 1:79)
+FR2<- FindNeighbors(object = FR2, dims = 1:87)
+FR1 <- FindClusters(object = FR1)
+FR2<- FindClusters(object = FR2)
+FR1 <- RunUMAP(object = FR1, dims = 1:79)
+FR2 <- RunUMAP(object = FR2, dims = 1:87)
+```
+
+#Run Doublet finder
+```{r}
+## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+sweep.res.list_MR1 <- paramSweep_v3(MR1, PCs = 1:63, sct = FALSE)
+sweep.stats_MR1  <- summarizeSweep(sweep.res.list_MR1 , GT = FALSE)
+bcmvn_MR1  <- find.pK(sweep.stats_MR1)
+
+ggplot(bcmvn_MR1, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+
+pK <- bcmvn_MR1 %>% # select the pK that corresponds to max bcmvn to optimize doublet detection
+  filter(BCmetric == max(BCmetric)) %>%
+  select(pK) 
+pK <- as.numeric(as.character(pK[[1]]))
+annotations <- MR1@meta.data$seurat_clusters
+homotypic.prop <- modelHomotypic(annotations)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi <- round(0.032*nrow(MR1@meta.data))  ## Assuming 3.2% doublet formation rate - for this data set. Rounding to 4000 cells
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+# run doubletFinder 
+MR1 <- doubletFinder_v3(MR1, 
+                                     PCs = 1:63, 
+                                     pN = 0.25, 
+                                     pK = pK, 
+                                     nExp = nExp_poi.adj,
+                                     reuse.pANN = FALSE, sct = FALSE)
+```
+
+```{r}
+# number of singlets and doublets
+table(MR1@meta.data$DF.classifications_0.25_0.06_112)
+```
+
+```{r}
+## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+sweep.res.list_MR2 <- paramSweep_v3(MR2, PCs = 1:59, sct = FALSE)
+sweep.stats_MR2  <- summarizeSweep(sweep.res.list_MR2 , GT = FALSE)
+bcmvn_MR2  <- find.pK(sweep.stats_MR2)
+ggplot(bcmvn_MR2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+pK <- bcmvn_MR2 %>% # select the pK that corresponds to max bcmvn to optimize doublet detection
+  filter(BCmetric == max(BCmetric)) %>%
+  select(pK) 
+pK <- as.numeric(as.character(pK[[1]]))
+Annotations <- MR2@meta.data$seurat_clusters
+homotypic.prop <- modelHomotypic(annotations)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi <- round(0.032*nrow(MR2@meta.data))  ## Assuming 3.2% doublet formation rate - for this data set. Rounding to 4000 cells
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+# run doubletFinder 
+MR2 <- doubletFinder_v3(MR2, 
+                                     PCs = 1:59, 
+                                     pN = 0.25, 
+                                     pK = pK, 
+                                     nExp = nExp_poi.adj,
+                                     reuse.pANN = FALSE, sct = FALSE)
+```
+
+```{r}
+# number of singlets and doublets
+table(MR2@meta.data$DF.classifications_0.25_0.005_132)
+```
+
+```{r}
+## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+sweep.res.list_FR1 <- paramSweep_v3(FR1, PCs = 1:79, sct = FALSE)
+sweep.stats_FR1  <- summarizeSweep(sweep.res.list_FR1 , GT = FALSE)
+bcmvn_FR1  <- find.pK(sweep.stats_FR1)
+ggplot(bcmvn_FR1, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+pK <- bcmvn_FR1 %>% # select the pK that corresponds to max bcmvn to optimize doublet detection
+  filter(BCmetric == max(BCmetric)) %>%
+  select(pK) 
+pK <- as.numeric(as.character(pK[[1]]))
+annotations <- FR1@meta.data$seurat_clusters
+homotypic.prop <- modelHomotypic(annotations)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi <- round(0.064*nrow(FR1@meta.data))  ## Assuming 6.4% doublet formation rate - for this data set. Rounding to 8000 cells
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+# run doubletFinder 
+FR1 <- doubletFinder_v3(FR1, 
+                                     PCs = 1:79, 
+                                     pN = 0.25, 
+                                     pK = pK, 
+                                     nExp = nExp_poi.adj,
+                                     reuse.pANN = FALSE, sct = FALSE)
+# number of singlets and doublets
+table(FR1@meta.data$DF.classifications_0.25_0.03_485)
+```
+
+```{r}
+## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+sweep.res.list_FR2 <- paramSweep_v3(FR2, PCs = 1:87, sct = FALSE)
+sweep.stats_FR2  <- summarizeSweep(sweep.res.list_FR2 , GT = FALSE)
+bcmvn_FR2  <- find.pK(sweep.stats_FR2)
+
+ggplot(bcmvn_FR2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+pK <- bcmvn_FR2 %>% # select the pK that corresponds to max bcmvn to optimize doublet detection
+  filter(BCmetric == max(BCmetric)) %>%
+  select(pK) 
+pK <- as.numeric(as.character(pK[[1]]))
+annotations <- FR2@meta.data$seurat_clusters
+homotypic.prop <- modelHomotypic(annotations)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi <- round(0.08*nrow(FR2@meta.data))  ## Assuming 8% doublet formation rate - for this data set. Rounding to 10,000 cells
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+# run doubletFinder 
+FR2 <- doubletFinder_v3(FR2, 
+                                     PCs = 1:87, 
+                                     pN = 0.25, 
+                                     pK = pK, 
+                                     nExp = nExp_poi.adj,
+                                     reuse.pANN = FALSE, sct = FALSE)
+# number of singlets and doublets
+table(FR2@meta.data$DF.classifications_0.25_0.3_786)
+```
+
+#Ask how many doublets identified by doublet finder are retained in Merged data processed in manuscript
+```{r}
+MR1 <- subset(MR1, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+MR1
+MR2 <- subset(MR2, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+MR2
+FR1 <- subset(FR1, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+FR1
+FR2 <- subset(FR2, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & nCount_RNA < 20000 & percent.mt < 5)
+FR2
+```
+
+```{r}
+MR1$replicate<-sample(c("MR1"), size = ncol(MR1), replace = TRUE)
+MR2$replicate<-sample(c("MR2"), size = ncol(MR2), replace = TRUE)
+
+
+FR1$replicate<-sample(c("FR1"), size = ncol(FR1), replace = TRUE)
+FR2$replicate<-sample(c("FR2"), size = ncol(FR2), replace = TRUE)
+
+Merge<-merge(MaleMerge, y = FemaleMerge, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+Merge <- NormalizeData(Merge, normalization.method = "LogNormalize", scale.factor = 10000)
+Merge <- FindVariableFeatures(Merge, selection.method = "vst", nfeatures = 2000)
+all.genesM <- rownames(Merge)
+Merge <- ScaleData(Merge, features = all.genesM)
+all.genesM <- rownames(Merge)
+Merge <- ScaleData(Merge, features = all.genesM)
+Merge<- RunPCA(Merge, features = VariableFeatures(object = Merge), npcs = 150)
+Merge <- FindNeighbors(Merge, dims = 1:107)
+Merge <- FindClusters(Merge, resolution = c(0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+Idents(Merge) <- "RNA_snn_res.1.2"
+DimPlot(Merge, reduction = "umap")
+```
+#Soruce data 2
+```{r}
+cellsperclusterDoubletMR1<-table(Idents(Merge), Merge$DF.classifications_0.25_0.06_112)
+cellsperclusterDoubletMR1
+library(data.table)
+fwrite(x = cellsperclusterDoubletMR1, file = "cellsperclusterDoubletMR1.csv")
+```
+
+```{r}
+cellsperclusterDoubletMR2<-table(Idents(Merge), Merge$DF.classifications_0.25_0.005_132)
+cellsperclusterDoubletMR2
+library(data.table)
+fwrite(x = cellsperclusterDoubletMR2, file = "cellsperclusterDoubletMR2.csv")
+```
+
+```{r}
+cellsperclusterDoubletFR1<-table(Idents(Merge), Merge$DF.classifications_0.25_0.03_485)
+cellsperclusterDoubletFR1
+library(data.table)
+fwrite(x = cellsperclusterDoubletFR1, file = "cellsperclusterDoubletFR1.csv")
+```
+
+```{r}
+cellsperclusterDoubletFR2<-table(Idents(Merge), Merge$DF.classifications_0.25_0.3_786)
+cellsperclusterDoubletFR2
+```
+
+```{r}
+library(data.table)
+fwrite(x = cellsperclusterDoubletFR2, file = "cellsperclusterDoubletFR2.csv")
+```
+
+
+Marker genes for Full data set
+#Source data 3
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+```{r}
+Merge.markersClusters<- FindAllMarkers(Merge, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+Merge.markersClusters %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+```
+
+```{r}
+data_to_write_out <- as.data.frame(as.matrix(Merge.markersClusters))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "Bothsexmarkers107PCs1.2.csv")
+```
+
+Marker gene heatmap
+#Figure 1 - figure supplement 4E
+```{r}
+top10 <-Merge.markersClusters %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+top5 <-Merge.markersClusters %>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+DoHeatmap(Merge, features = top10$gene) + NoLegend()
+top10clusterheatmap<-DoHeatmap(Merge, features = top10$gene, label=FALSE)+  scale_fill_gradientn(colors = RColorBrewer::brewer.pal(n = 10, name = "RdBu"))  + NoLegend()
+top10clusterheatmap
+```
+
+#Integrating male and female data using Seurat Data integration:
+
+```{r}
+MaleMerge$sex<-sample(c("Male"), size = ncol(MaleMerge), replace = TRUE)
+FemaleMerge$sex<-sample(c("Female"), size = ncol(FemaleMerge), replace = TRUE)
+```
+
+
+Perform integration
+
+We then identify anchors using the FindIntegrationAnchors function, which takes a list of Seurat objects as input, and use these anchors to integrate the two datasets together with IntegrateData.
+```{r}
+Both.anchors <- FindIntegrationAnchors(object.list = list(MaleMerge, FemaleMerge), anchor.features = 2000, dims = 1:150)
+```
+
+
+```{r}
+sex.combined <- IntegrateData(anchorset = Both.anchors, dims = 1:150)
+```
+
+```{r}
+DefaultAssay(sex.combined) <- "integrated"
+sex.combined <- ScaleData(sex.combined)
+```
+
+```{r}
+sex.combined <- RunPCA(sex.combined, npcs = 150)
+```
+
+```{r}
+sex.combined <- JackStraw(sex.combined, num.replicate = 100,dims = 150)
+```
+
+Figure 1 - figure supplement 5A
+```{r}
+sex.combined<- ScoreJackStraw(sex.combined, dims = 1:150)
+JackStrawPlot(sex.combined, dims = 1:150)
+```
+
+```{r}
+sex.combined <- RunUMAP(sex.combined, reduction = "pca", dims = 1:125)
+```
+
+```{r}
+sex.combined <- FindNeighbors(sex.combined, reduction = "pca", dims = 1:125)
+sex.combined <- FindClusters(sex.combined, resolution = c(0.1, 0.2, 0.3,0.5,0.7,1,1.1,1.2,1.5,1.6,1.8,2,2.5))
+```
+
+#Figure 1 - figure supplement 5B and D
+```{r}
+Idents(sex.combined) <- "integrated_snn_res.1.8"
+p1 <- DimPlot(sex.combined, reduction = "umap", group.by = "sex")
+p2 <- DimPlot(sex.combined, reduction = "umap", label = TRUE)
+p3 <- DimPlot(sex.combined, reduction = "umap", group.by = "replicate")
+plot_grid(p1, p2, p3)
+```
+
+#Source Data 2
+```{r}
+cellsperclusterIntegrated<-table(Idents(sex.combined), sex.combined$replicate)
+cellsperclusterIntegrated
+```
+
+
+```{r}
+library(data.table)
+```
+
+```{r}
+fwrite(x = cellsperclusterIntegrated, file = "cellsperclusterIntegrated_byreplicate.csv")
+```
+
+```{r}
+saveRDS(sex.combined, file = "sex.combined_integrated.rds")
+```
+
+UMAP plot by sex
+#Figure 2A
+```{r}
+Idents(Merge) <- "sex"
+DimPlot(Merge, reduction = "umap")
+```
+
+
+roX expression in full data set
+#Figure 1 - figure supplement 6G-H
+```{r}
+FeaturePlot(Merge, features = c("roX1", "roX2"), min.cutoff = "q0")
+```
+
+
+roX removal analysis
+#Figure 1 - figure supplement 6I-J
+Remove roX1 and roX2 from both the male and female matrices before merging them:
+```{r}
+malecounts <- GetAssayData(MaleMerge, assay = "RNA")
+malecounts <- malecounts[-(which(rownames(malecounts) %in% c('roX1','roX2'))),]
+MaleMerge2 <- subset(MaleMerge, features = rownames(malecounts))
+```
+
+
+```{r}
+femalecounts <- GetAssayData(FemaleMerge, assay = "RNA")
+femalecounts <- femalecounts[-(which(rownames(femalecounts) %in% c('roX1','roX2'))),]
+FemaleMerge2 <- subset(FemaleMerge, features = rownames(femalecounts))
+
+```
+
+
+```{r}
+remove(MaleMerge)
+remove(FemaleMerge)
+remove(malecounts)
+remove(femalecounts)
+```
+
+```{r}
+library(future)
+plan()
+plan("multiprocess", workers = 6)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+MaleMerge2$sex<-sample(c("Male"), size = ncol(MaleMerge2), replace = TRUE)
+FemaleMerge2$sex<-sample(c("Female"), size = ncol(FemaleMerge2), replace = TRUE)
+```
+
+```{r}
+MergeroX<-merge(MaleMerge2, y = FemaleMerge2, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+Remove objects that are taking up memory space
+```{r}
+remove(FemaleMerge2)
+remove(MaleMerge2)
+```
+
+Now to normalize and scale the merged male and female datasets where rox1 and rox2 are removed from the matrix
+```{r}
+MergeroX <- NormalizeData(MergeroX, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+MergeroX <- FindVariableFeatures(MergeroX, selection.method = "vst", nfeatures = 2000)
+```
+
+Scale
+```{r}
+all.genesM <- rownames(MergeroX)
+MergeroX <- ScaleData(MergeroX, features = all.genesM)
+```
+
+Run PCA
+```{r}
+MergeroX<- RunPCA(MergeroX, features = VariableFeatures(object = MergeroX), npcs = 150)
+```
+
+
+```{r}
+saveRDS(MergeroX, file = "MergeroX_new.rds")
+```
+
+
+```{r}
+MergeroX<-readRDS("~/Documents/Colleen's R-Notebooks/MergeroX_new.rds")
+```
+
+
+```{r}
+MergeroX <- JackStraw(MergeroX, num.replicate = 100,dims = 150)
+MergeroX<- ScoreJackStraw(MergeroX, dims = 1:150)
+```
+
+```{r}
+JackStrawPlot(MergeroX, dims = 1:150)
+```
+107 PCs are significant - the same number as when we had left roX1 and 2 in the data set. 
+
+
+Run the clustering
+```{r}
+MergeroX <- FindNeighbors(MergeroX, dims = 1:107)
+MergeroX <- FindClusters(MergeroX, resolution = c(0.1, 0.2, 0.3,0.5,0.7,1,1.1,1.2,1.5,2,2.5))
+```
+
+```{r}
+MergeroX <- RunUMAP(MergeroX, dims = 1:107)
+```
+
+Make the UMAP
+```{r}
+Idents(MergeroX) <- "RNA_snn_res.1.2"
+DimPlot(MergeroX, reduction = "umap")
+```
+
+#Figure 1 - figure supplement 6I
+```{r}
+Idents(MergeroX) <- "sex"
+p3<-DimPlot(MergeroX, reduction = "umap")
+p3
+```
+
+#Figure 1 - figure supplement 6J
+```{r}
+Idents(MergeroX) <- "replicate"
+p4<-DimPlot(MergeroX, reduction = "umap")
+p4
+```
+
+GO for marker genes in ClusterProfiler
+```{r}
+library(clusterProfiler)
+```
+
+Load the marker genes for all three analyses 
+```{r}
+Markergenes<- read.table(file="~/Desktop/Markergenes.csv", header=TRUE, sep=",")
+lapply(Markergenes, head)
+```
+
+Molecular Function
+```{r}
+ckMF <- compareCluster(geneCluster = Markergenes, fun = "enrichGO",OrgDb='org.Dm.eg.db',keyType= 'SYMBOL',
+                ont           = "MF",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05)
+head(as.data.frame(ckMF))
+```
+
+Pull the GO list:
+#Source data 4
+```{r}
+Markergenes<-as.data.frame(ckMF,row.names = NULL)
+write.table(x = Markergenes,sep="\t", quote=F, row.names=F,file = "MarkergenesMF.txt")
+```
+
+#Figure 1 - figure supplement 7A
+```{r}
+dotplot(ckMF, showCategory=10)
+```
+
+Biological Process
+```{r}
+ckBP <- compareCluster(geneCluster = Markergenes, fun = "enrichGO",OrgDb='org.Dm.eg.db',keyType= 'SYMBOL',
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05)
+head(as.data.frame(ckBP))
+```
+
+Pull the GO list:
+#Source data 4
+```{r}
+Markergenes<-as.data.frame(ckBP,row.names = NULL)
+write.table(x = Markergenes,sep="\t", quote=F, row.names=F,file = "MarkergenesBP.txt")
+```
+
+#Figure 1 - figure supplement 7B
+```{r}
+dotplot(ckBP, showCategory=10)
+```
+
+Cellular component 
+```{r}
+ckCC <- compareCluster(geneCluster = Markergenes, fun = "enrichGO",OrgDb='org.Dm.eg.db',keyType= 'SYMBOL',
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05)
+head(as.data.frame(ckCC))
+```
+
+#Source data 4
+```{r}
+Markergenes<-as.data.frame(ckCC,row.names = NULL)
+write.table(x = Markergenes,sep="\t", quote=F, row.names=F,file = "MarkergenesCC.txt")
+```
+
+#Figure 1 - figure supplement 7C
+```{r}
+dotplot(ckCC, showCategory=10)
+```
+
+#DIP-iota expression in all data sets
+roX expression in full data set
+#Figure 1 - figure supplement 8A-C
+```{r}
+FeaturePlot(MaleMerge, features = "DIP-iota", min.cutoff = "q0")
+FeaturePlot(FemaleMerge, features "DIP-iota", min.cutoff = "q0")
+FeaturePlot(Merge, features = "DIP-iota", min.cutoff = "q0")
+```
+
+
+#Sex-biased cluster annotation based on Source data 3
+```{r}
+sexbias <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge Cell annotations_sexbias.csv", header=TRUE, sep=",")
+head(sexbias)
+sexbias$sexbias <- as.character(sexbias$sex_bias)
+sexbias <- as.vector(sexbias$sex_bias)
+```
+
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+
+```{r}
+names(sexbias)<-levels(Merge)
+Merge<-RenameIdents(Merge, sexbias)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap")
+```
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "sexbias")
+```
+#Figure 2B
+```{r}
+Idents(Merge) <- "sexbias"
+DimPlot(object = Merge, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red"))
+```
+
+Look at top marker genes for sex-specific clusters
+Pull these clusters into new object
+```{r}
+SS<-subset(x = Merge, idents = c("68", "97", "99", "107"))
+```
+#Figure 2C
+```{r}
+SSDotplot<-DotPlot(SS, features = c("dsx", "jim", "vvl", "pros", "CG31221", "Poxn", "HLH3B", "CG8861", "CG14989", "DIP-alpha", "DIP-delta", "Pvf3", "ct", "CG12594", "Pde1c", "AstC", "CCHa2", "CG17777", "IA-2", "CG15537"))
+SSDotplot + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+Random cell removal analysis
+#Figure 2 - Figure supplement 1A, Source data 5
+Plot equal numbers of cells represented by each sex in Full data set UMAP space
+```{r}
+FemaleCells <-  which(Merge$sex == 'Female')
+MaleCells <- which(Merge$sex == 'Male')
+downsampled_Female_cells <- sample(FemaleCells, 7988)
+RandomCellRemoval1 <- Merge[,c(MaleCells, downsampled_Female_cells)]
+DimPlot(RandomCellRemoval1, reduction = "umap", split.by ="sex", ncol=2)
+DimPlot(RandomCellRemoval1, reduction = "umap")
+Idents(RandomCellRemoval1) <- "sex"
+DimPlot(RandomCellRemoval1, reduction = "umap")
+```
+
+
+```{r}
+Idents(RandomCellRemoval1) <- "RNA_snn_res.1.2"
+cellsperclustersex<-table(Idents(RandomCellRemoval1),RandomCellRemoval1$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Clustersbysex_Mergewdownsampled4.csv")
+```
+
+
+```{r}
+FemaleCells <-  which(Merge$sex == 'Female')
+MaleCells <- which(Merge$sex == 'Male')
+downsampled_Female_cells <- sample(FemaleCells, 7988)
+RandomCellRemoval2 <- Merge[,c(MaleCells, downsampled_Female_cells)]
+DimPlot(RandomCellRemoval2, reduction = "umap", split.by ="sex", ncol=2)
+DimPlot(RandomCellRemoval2, reduction = "umap")
+Idents(RandomCellRemoval2) <- "sex"
+DimPlot(RandomCellRemoval2, reduction = "umap")
+```
+
+
+```{r}
+Idents(RandomCellRemoval2) <- "RNA_snn_res.1.2"
+cellsperclustersex<-table(Idents(RandomCellRemoval2),RandomCellRemoval2$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Clustersbysex_Mergewdownsampled5.csv")
+```
+
+
+```{r}
+FemaleCells <-  which(Merge$sex == 'Female')
+MaleCells <- which(Merge$sex == 'Male')
+downsampled_Female_cells <- sample(FemaleCells, 7988)
+RandomCellRemoval3 <- Merge[,c(MaleCells,downsampled_Female_cells)]
+DimPlot(RandomCellRemoval3, reduction = "umap", split.by ="sex", ncol=2)
+DimPlot(RandomCellRemoval3, reduction = "umap")
+Idents(RandomCellRemoval3) <- "sex"
+DimPlot(RandomCellRemoval3, reduction = "umap")
+```
+
+
+```{r}
+Idents(RandomCellRemoval3) <- "RNA_snn_res.1.2"
+cellsperclustersex<-table(Idents(RandomCellRemoval3),RandomCellRemoval3$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Clustersbysex_Mergewdownsampled6.csv")
+```
+
+
+Plot of all
+```{r}
+Idents(Merge) <- "sex"
+p1<-DimPlot(Merge, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+Idents(RandomCellRemoval1) <- "sex"
+p2<-DimPlot(RandomCellRemoval1, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+Idents(RandomCellRemoval2) <- "sex"
+p3<-DimPlot(RandomCellRemoval2, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+Idents(RandomCellRemoval3) <- "sex"
+p4<-DimPlot(RandomCellRemoval3, reduction = "umap",cols = c("#00BFC4", "#F8766D")) & NoAxes()
+plot_grid(p1, p2, p3, p4, ncol=4)
+```
+
+
+Annotations by sex bias
+
+Read in cluster annotations
+```{r}
+sexbias4 <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/DownsampledSexBias4_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias4)
+sexbias4$sex_bias <- as.character(sexbias4$sex_bias)
+sexbias4 <- as.vector(sexbias4$sex_bias)
+```
+
+```{r}
+Idents(RandomCellRemoval1) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval2) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval3) <- "RNA_snn_res.1.2"
+```
+
+```{r}
+names(sexbias4)<-levels(RandomCellRemoval1)
+RandomCellRemoval1<-RenameIdents(RandomCellRemoval1, sexbias4)
+```
+
+```{r}
+DimPlot(RandomCellRemoval1, reduction = "umap")
+```
+
+
+```{r}
+RandomCellRemoval1 <- StashIdent(object = RandomCellRemoval1, save.name = "sexbias")
+```
+
+
+```{r}
+Idents(RandomCellRemoval1) <- "sexbias"
+DimPlot(object = RandomCellRemoval1, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red"))
+```
+
+```{r}
+saveRDS(RandomCellRemoval1, file = "RandomCellRemoval1.rds")
+```
+
+
+Read in cluster annotations
+```{r}
+sexbias5 <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/DownsampledSexBias5_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias5)
+sexbias5$sex_bias <- as.character(sexbias5$sex_bias)
+sexbias5 <- as.vector(sexbias5$sex_bias)
+```
+
+```{r}
+Idents(RandomCellRemoval1) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval2) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval3) <- "RNA_snn_res.1.2"
+```
+
+
+```{r}
+names(sexbias5)<-levels(RandomCellRemoval2)
+RandomCellRemoval2<-RenameIdents(RandomCellRemoval2, sexbias5)
+```
+
+```{r}
+DimPlot(RandomCellRemoval2, reduction = "umap")
+```
+
+
+```{r}
+RandomCellRemoval2 <- StashIdent(object = RandomCellRemoval2, save.name = "sexbias")
+```
+
+
+```{r}
+Idents(RandomCellRemoval2) <- "sexbias"
+DimPlot(object = RandomCellRemoval2, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red"))
+```
+
+```{r}
+saveRDS(RandomCellRemoval2, file = "RandomCellRemoval2.rds")
+```
+
+Read in cluster annotations
+```{r}
+sexbias6 <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/DownsampledSexBias6_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias6)
+sexbias6$sex_bias <- as.character(sexbias6$sex_bias)
+sexbias6 <- as.vector(sexbias6$sex_bias)
+```
+
+```{r}
+Idents(RandomCellRemoval1) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval2) <- "RNA_snn_res.1.2"
+Idents(RandomCellRemoval3) <- "RNA_snn_res.1.2"
+```
+
+
+```{r}
+names(sexbias6)<-levels(RandomCellRemoval3)
+RandomCellRemoval3<-RenameIdents(RandomCellRemoval3, sexbias6)
+```
+
+```{r}
+DimPlot(RandomCellRemoval3, reduction = "umap")
+```
+
+
+```{r}
+RandomCellRemoval3 <- StashIdent(object = RandomCellRemoval3, save.name = "sexbias")
+```
+
+
+```{r}
+Idents(RandomCellRemoval3) <- "sexbias"
+DimPlot(object = RandomCellRemoval3, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red"))
+```
+
+```{r}
+saveRDS(RandomCellRemoval3, file = "RandomCellRemoval3.rds")
+```
+
+
+Sex-biased side by sides
+
+```{r}
+RandomCellRemoval1<-readRDS("~/Documents/Colleen's R-Notebooks/RandomCellRemoval1.rds")
+RandomCellRemoval2<-readRDS("~/Documents/Colleen's R-Notebooks/RandomCellRemoval2.rds")
+RandomCellRemoval3<-readRDS("~/Documents/Colleen's R-Notebooks/RandomCellRemoval3.rds")
+```
+
+
+#Figure 2 - Figure supplement 1A
+```{r}
+p1<-DimPlot(object = Merge, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red")) & NoAxes()
+p2<-DimPlot(object = RandomCellRemoval1, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red")) & NoAxes()
+p3<-DimPlot(object = RandomCellRemoval2, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red")) & NoAxes()
+p4<-DimPlot(object = RandomCellRemoval3, reduction = "umap",cols = c("light blue", "grey", "maroon4", "light pink", "dark blue", "blue", "red")) & NoAxes()
+plot_grid(p1, p2, p3, p4, ncol=4)
+```
+
+Downsampling analysis where female cells were downsampled to equal male cell number and fully reanalyzed
+#Figure 2 - Figure supplement 1B, Source data 5
+Now downsample the female merge to the same number of cells as thae male data set: 7,989
+```{r}
+FemaleMerge.downsample <- FemaleMerge[, sample(colnames(FemaleMerge), size = ncol(MaleMerge), replace=F)]
+```
+
+
+```{r}
+library(future)
+plan()
+plan("multiprocess", workers = 6)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+FemaleMerge.downsample$sex<-sample(c("Female"), size = ncol(FemaleMerge.downsample), replace = TRUE)
+```
+
+```{r}
+Merge.downsampled<-merge(MaleMerge, y = FemaleMerge.downsample, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+
+Normalize
+```{r}
+Merge.downsampled <- NormalizeData(Merge.downsampled, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+Merge.downsampled <- FindVariableFeatures(Merge.downsampled, selection.method = "vst", nfeatures = 2000)
+```
+
+Scale
+```{r}
+all.genesM <- rownames(Merge.downsampled)
+Merge.downsampled <- ScaleData(Merge.downsampled, features = all.genesM)
+```
+
+Run PCA
+```{r}
+Merge.downsampled<- RunPCA(Merge.downsampled, features = VariableFeatures(object = Merge.downsampled), npcs = 150)
+```
+
+
+```{r}
+Merge.downsampled <- JackStraw(Merge.downsampled, num.replicate = 100,dims = 150)
+Merge.downsampled<- ScoreJackStraw(Merge.downsampled, dims = 1:150)
+```
+
+
+```{r}
+JackStrawPlot(Merge.downsampled, dims = 1:150)
+```
+99 PCs significant
+
+Run the clustering
+```{r}
+Merge.downsampled <- FindNeighbors(Merge.downsampled, dims = 1:99)
+Merge.downsampled <- FindClusters(Merge.downsampled, resolution = c(0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5,2.7,3.0,3.1))
+```
+
+
+```{r}
+clustTreePlot <- clustree(Merge.downsampled, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlot
+```
+
+```{r}
+Merge.downsampled <- RunUMAP(Merge.downsampled, dims = 1:99)
+```
+
+Make the Umap
+```{r}
+Idents(Merge.downsampled) <- "RNA_snn_res.3"
+DimPlot(Merge.downsampled, reduction = "umap")
+```
+
+#Source data 5
+Downsample 1
+```{r}
+cellsperclustersex<-table(Idents(Merge.downsampled),Merge.downsampled$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Downsampledcellsperclustersex.csv")
+```
+
+```{r}
+saveRDS(Merge.downsampled1, file = "MergeDownsampled1.rds")
+```
+
+
+
+#Downsample set 2 
+
+```{r}
+FemaleMerge.downsample2 <- FemaleMerge[, sample(colnames(FemaleMerge), size = 7989, replace=F)]
+```
+
+
+```{r}
+library(future)
+plan()
+plan("multiprocess", workers = 6)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+FemaleMerge.downsample2$sex<-sample(c("Female"), size = ncol(FemaleMerge.downsample2), replace = TRUE)
+```
+
+```{r}
+Merge.downsampled2<-merge(MaleMerge, y = FemaleMerge.downsample2, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+Normalize
+```{r}
+Merge.downsampled2 <- NormalizeData(Merge.downsampled2, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+Merge.downsampled2 <- FindVariableFeatures(Merge.downsampled2, selection.method = "vst", nfeatures = 2000)
+```
+
+Scale
+```{r}
+all.genesM <- rownames(Merge.downsampled2)
+Merge.downsampled2 <- ScaleData(Merge.downsampled2, features = all.genesM)
+```
+
+Run PCA
+```{r}
+Merge.downsampled3<- RunPCA(Merge.downsampled2, features = VariableFeatures(object = Merge.downsampled2), npcs = 150)
+```
+
+
+```{r}
+Merge.downsampled2 <- JackStraw(Merge.downsampled2, num.replicate = 100,dims = 150)
+Merge.downsampled2<- ScoreJackStraw(Merge.downsampled2, dims = 1:150)
+```
+
+
+```{r}
+JackStrawPlot(Merge.downsampled2, dims = 1:150)
+```
+98 PCs significant
+
+
+Run the clustering
+```{r}
+Merge.downsampled2 <- FindNeighbors(Merge.downsampled2, dims = 1:98)
+Merge.downsampled2 <- FindClusters(Merge.downsampled2, resolution = c(0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5,2.7,3.0,3.1))
+```
+
+```{r}
+clustTreePlot <- clustree(Merge.downsampled2, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlot
+```
+
+```{r}
+Merge.downsampled2 <- RunUMAP(Merge.downsampled2, dims = 1:98)
+```
+
+
+Make the Umap
+```{r}
+Idents(Merge.downsampled2) <- "RNA_snn_res.3"
+DimPlot(Merge.downsampled2, reduction = "umap")
+```
+
+
+Downsample 2
+#Source data 5
+```{r}
+cellsperclustersex<-table(Idents(Merge.downsampled2),Merge.downsampled2$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Downsampledcellsperclustersex2.csv")
+```
+
+```{r}
+saveRDS(Merge.downsampled3, file = "MergeDownsampled2.rds")
+```
+
+#Downsample 3 
+
+```{r}
+FemaleMerge.downsample3 <- FemaleMerge[, sample(colnames(FemaleMerge), size = 7989, replace=F)]
+```
+
+
+
+```{r}
+library(future)
+plan()
+plan("multiprocess", workers = 6)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+Assign the sex of the data set so we can call these back out by sex:
+```{r}
+FemaleMerge.downsample3$sex<-sample(c("Female"), size = ncol(FemaleMerge.downsample3), replace = TRUE)
+```
+
+```{r}
+Merge.downsampled3<-merge(MaleMerge, y = FemaleMerge.downsample3, add.cell.ids = c("MaleMerge", "FemaleMerge"), project = "48hrAPF")
+```
+
+
+Normalize
+```{r}
+Merge.downsampled3 <- NormalizeData(Merge.downsampled3, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+Merge.downsampled3 <- FindVariableFeatures(Merge.downsampled3, selection.method = "vst", nfeatures = 2000)
+```
+
+Scale
+```{r}
+all.genesM <- rownames(Merge.downsampled3)
+Merge.downsampled3 <- ScaleData(Merge.downsampled3, features = all.genesM)
+```
+
+Run PCA
+```{r}
+Merge.downsampled3<- RunPCA(Merge.downsampled3, features = VariableFeatures(object = Merge.downsampled3), npcs = 150)
+```
+
+
+```{r}
+saveRDS(Merge.downsampled3, file = "MergeDownsampled3.rds")
+```
+
+
+```{r}
+Merge.downsampled3<-readRDS("~/Documents/Colleen's R-Notebooks/MergeDownsampled3.rds")
+```
+
+
+```{r}
+Merge.downsampled3 <- JackStraw(Merge.downsampled3, num.replicate = 100,dims = 150)
+Merge.downsampled3<- ScoreJackStraw(Merge.downsampled3, dims = 1:150)
+```
+
+
+```{r}
+JackStrawPlot(Merge.downsampled3, dims = 1:150)
+```
+99 PCs significant
+
+
+Run the clustering
+```{r}
+Merge.downsampled3 <- FindNeighbors(Merge.downsampled3, dims = 1:99)
+Merge.downsampled3 <- FindClusters(Merge.downsampled3, resolution = c(0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5,2.7,3.0,3.1,3.2))
+```
+```{r}
+clustTreePlot <- clustree(Merge.downsampled3, prefix = "RNA_snn_res.") + theme(legend.position = "right")
+clustTreePlot
+```
+
+```{r}
+Merge.downsampled3 <- RunUMAP(Merge.downsampled3, dims = 1:99)
+```
+
+
+Make the Umap
+```{r}
+Idents(Merge.downsampled3) <- "RNA_snn_res.3.1"
+DimPlot(Merge.downsampled3, reduction = "umap")
+```
+
+#Source data 5
+```{r}
+cellsperclustersex<-table(Idents(Merge.downsampled),Merge.downsampled$sex)
+cellsperclustersex
+library(data.table)
+fwrite(x = cellsperclustersex, file = "Downsampledcellsperclustersex3.csv")
+```
+
+Bring in all down sampled versions to do side-by-side plots
+
+```{r}
+Merge.downsampled1<-readRDS("~/Documents/Colleen's R-Notebooks/MergeDownsampled.rds")
+Merge.downsampled2<-readRDS("~/Documents/Colleen's R-Notebooks/MergeDownsampled2.rds")
+Merge.downsampled3<-readRDS("~/Documents/Colleen's R-Notebooks/MergeDownsampled3.rds")
+```
+
+
+Set appropraite identities to output correct number of clusters for each interation
+```{r}
+Idents(Merge.downsampled1) <- "RNA_snn_res.3"
+DimPlot(Merge.downsampled1, reduction = "umap")
+Idents(Merge.downsampled2) <- "RNA_snn_res.3"
+DimPlot(Merge.downsampled2, reduction = "umap")
+Idents(Merge.downsampled3) <- "RNA_snn_res.3.1"
+DimPlot(Merge.downsampled3, reduction = "umap")
+```
+
+#Read in sex-bias annotations in Source data 5
+
+Read in cluster annotations
+```{r}
+sexbias <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Downsampled1SexBias_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias)
+sexbias$sex_bias <- as.character(sexbias$sex_bias)
+sexbias <- as.vector(sexbias$sex_bias)
+```
+
+```{r}
+Idents(Merge.downsampled1) <- "RNA_snn_res.3"
+Idents(Merge.downsampled2) <- "RNA_snn_res.3"
+Idents(Merge.downsampled3) <- "RNA_snn_res.3.1"
+```
+
+
+```{r}
+names(sexbias)<-levels(Merge.downsampled1)
+Merge.downsampled1<-RenameIdents(Merge.downsampled1, sexbias)
+```
+
+```{r}
+DimPlot(Merge.downsampled1, reduction = "umap")
+```
+
+
+```{r}
+Merge.downsampled1 <- StashIdent(object = Merge.downsampled1, save.name = "sexbias")
+```
+
+#Figure 2 - Figure supplement 1B
+```{r}
+Idents(Merge.downsampled1) <- "sexbias"
+DimPlot(object = Merge.downsampled1, reduction = "umap",cols = c("light blue", "grey", "light pink", "dark blue", "blue", "maroon4", "red"))
+```
+
+
+```{r}
+sexbias2 <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Downsampled2SexBias_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias2)
+sexbias2$sex_bias <- as.character(sexbias2$sex_bias)
+sexbias2 <- as.vector(sexbias2$sex_bias)
+```
+
+```{r}
+Idents(Merge.downsampled1) <- "RNA_snn_res.3"
+Idents(Merge.downsampled2) <- "RNA_snn_res.3"
+Idents(Merge.downsampled3) <- "RNA_snn_res.3.1"
+```
+
+
+```{r}
+names(sexbias2)<-levels(Merge.downsampled2)
+Merge.downsampled2<-RenameIdents(Merge.downsampled2, sexbias2)
+```
+
+```{r}
+DimPlot(Merge.downsampled2, reduction = "umap")
+```
+
+
+```{r}
+Merge.downsampled2 <- StashIdent(object = Merge.downsampled2, save.name = "sexbias")
+```
+
+##Figure 2 - Figure supplement 1B
+```{r}
+Idents(Merge.downsampled2) <- "sexbias"
+DimPlot(object = Merge.downsampled2, reduction = "umap",cols = c("light blue", "grey", "light pink", "maroon4", "dark blue", "blue"))
+```
+
+Read in cluster annotations
+```{r}
+sexbias3 <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Downsampled3SexBias_cellannotations.csv", header=TRUE, sep=",")
+head(sexbias3)
+sexbias3$sex_bias <- as.character(sexbias3$sex_bias)
+sexbias3 <- as.vector(sexbias3$sex_bias)
+```
+
+```{r}
+Idents(Merge.downsampled1) <- "RNA_snn_res.3"
+Idents(Merge.downsampled2) <- "RNA_snn_res.3"
+Idents(Merge.downsampled3) <- "RNA_snn_res.3.1"
+```
+
+
+```{r}
+names(sexbias3)<-levels(Merge.downsampled3)
+Merge.downsampled3<-RenameIdents(Merge.downsampled3, sexbias3)
+```
+
+```{r}
+DimPlot(Merge.downsampled3, reduction = "umap")
+```
+
+
+```{r}
+Merge.downsampled3 <- StashIdent(object = Merge.downsampled3, save.name = "sexbias")
+```
+
+#Figure 2 - Figure supplement 1B
+```{r}
+Idents(Merge.downsampled3) <- "sexbias"
+DimPlot(object = Merge.downsampled3, reduction = "umap",cols = c("light blue", "grey", "light pink", "dark blue", "blue", "maroon4", "red"))
+```
+
+Match cluster identities from Full Data set with downsampled data sets using clustifyr
+#Source data 3
+Create clustifyR ref from Merge data set
+
+```{r}
+library(clustifyr)
+```
+
+
+```{r}
+Mergeref <- seurat_ref(
+  seurat_object = Merge,        # SeuratV3 object
+  cluster_col = "RNA_snn_res.1.2"    # name of column in meta.data containing cell identities
+)
+```
+
+```{r}
+res <- clustify(
+  input = Merge.downsampled1,       # a Seurat object
+  ref_mat = Mergeref,    # matrix of RNA-seq expression data for each cell type
+  cluster_col = "RNA_snn_res.3", # name of column in meta.data containing cell clusters
+  obj_out = TRUE,
+  verbose = TRUE # output Seurat object with cell type inserted as "type" column
+)
+```
+
+
+```{r}
+Idents(res) <- "type"
+DimPlot(object = res, reduction = "umap")
+```
+
+
+
+```{r}
+cellsperclustersex<-table(Idents(res),res$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Merge.downsampledclustifyr.csv")
+```
+
+
+```{r}
+res2 <- clustify(
+  input = Merge.downsampled2,       # a Seurat object
+  ref_mat = Mergeref,    # matrix of RNA-seq expression data for each cell type
+  cluster_col = "RNA_snn_res.3", # name of column in meta.data containing cell clusters
+  obj_out = TRUE,
+  verbose = TRUE # output Seurat object with cell type inserted as "type" column
+)
+```
+
+
+```{r}
+Idents(res2) <- "type"
+DimPlot(object = res2, reduction = "umap")
+```
+
+
+```{r}
+cellsperclustersex<-table(Idents(res2),res2$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Merge.downsampled2clustifyr.csv")
+```
+
+
+```{r}
+res3 <- clustify(
+  input = Merge.downsampled3,       # a Seurat object
+  ref_mat = Mergeref,    # matrix of RNA-seq expression data for each cell type
+  cluster_col = "RNA_snn_res.3", # name of column in meta.data containing cell clusters
+  obj_out = TRUE,
+  verbose = TRUE # output Seurat object with cell type inserted as "type" column
+)
+```
+
+
+```{r}
+Idents(res3) <- "type"
+DimPlot(object = res3, reduction = "umap")
+```
+
+
+```{r}
+cellsperclustersex<-table(Idents(res3),res3$sex)
+cellsperclustersex
+fwrite(x = cellsperclustersex, file = "Merge.downsampled3clustifyr.csv")
+```
+
+Sex-specific clusters
+##Figure 2 - Figure supplement 2A
+```{r}
+Femalespecific107<-subset(x = Merge, idents = "107")
+VlnPlot(Femalespecific97, features = c("CCHa2","Antp", "Ubx", "abd-A", "Abd-B", "tsh"), ncol=6)
+```
+#Figure 2 - Figure supplement 2B
+```{r}
+malespecific68<-subset(x = Merge, idents = "68")
+FeaturePlot(malespecific68, features = c("dsx","Antp", "Ubx", "abd-A", "Abd-B", "tsh",), ncol=6)
+```
+
+dsx analysis for male-biased and male-specific clusters
+```{r}
+dsxAnnotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/dsx_subcluster_annotation.csv", header=TRUE, sep=",")
+head(dsxAnnotations)
+dsxAnnotations$Annotation <- as.character(dsxAnnotations$Annotation)
+dsxAnnotations <- as.vector(dsxAnnotations$Annotation)
+```
+
+```{r}
+names(dsxAnnotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, dsxAnnotations)
+```
+#Figure 2 - Figure supplement 2C
+```{r}
+DimPlot(object = Merge, reduction = "umap",cols = c("grey", "light blue", "blue", "dark blue")) & NoAxes()
+```
+
+dsx subclustering: Taking the male specific, strongly male-biased, and male-biased clusters that express dsx. Clusters 21, 47, and 68.
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+```{r}
+dsx<-subset(x = Merge, idents = c("21", "47", "68"))
+```
+
+Take only dsx-expessing cells in these clusters
+```{r}
+dsx2<-subset(x = dsx, subset = dsx > 0)
+```
+
+Normalize
+```{r}
+dsx2 <- NormalizeData(dsx2, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+dsx2<- FindVariableFeatures(dsx2, selection.method = "vst", nfeatures = 2000)
+```
+
+Scale
+```{r}
+all.genesM <- rownames(dsx2)
+dsx2 <- ScaleData(dsx2, features = all.genesM)
+```
+
+Run PCA
+```{r}
+dsx2<- RunPCA(dsx2, features = VariableFeatures(object = dsx2), npcs = 50)
+```
+
+```{r}
+dsx2<- JackStraw(dsx2, num.replicate = 100,dims = 50)
+dsx2<- ScoreJackStraw(dsx2, dims = 1:50)
+```
+
+```{r}
+JackStrawPlot(dsx2, dims = 1:50)
+```
+27 PCs
+
+```{r}
+dsx2 <- RunUMAP(dsx2, dims = 1:27)
+```
+
+Run the clustering
+```{r}
+dsx2 <- FindNeighbors(dsx2, dims = 1:27)
+dsx2<- FindClusters(dsx2, resolution = c(0.1, 0.2, 0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+```
+
+Make the Umap
+#Figure 2E
+```{r}
+Idents(dsx2) <- "RNA_snn_res.0.5"
+DimPlot(dsx2, reduction = "umap")
+```
+
+#Figure 2E
+```{r}
+Idents(dsx2) <- "sex"
+DimPlot(dsx2, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+
+```
+
+```{r}
+cellsperclustersex<-table(Idents(dsx2),dsx2$sex)
+cellsperclustersex
+```
+#Figure 2 - Figure supplement 2D
+```{r}
+Idents(dsx2) <- "sexbias"
+DimPlot(dsx2, reduction = "umap", cols=c("light blue", "blue", "dark blue")) & NoAxes()
+```
+
+#Figure 2 - Figure supplement 2E-H
+```{r fig.height=15, fig.width=20}
+FeaturePlot(dsx2, features = c("abd-A", "Abd-B", "Antp", "Ubx"), min.cutoff = "q0")
+FeaturePlot(dsx2, features = c("abd-A", "Abd-B", "Antp", "Ubx"), ncol=1, min.cutoff = "q0")  & NoAxes()
+```
+
+
+```{r}
+dsx2.markers <- FindAllMarkers(dsx2, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top5<-dsx2.markers%>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+top5
+top10<-dsx2.markers%>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+top10
+```
+
+#Source data 6
+```{r}
+library(data.table)
+data_to_write_out <- as.data.frame(as.matrix(dsx2.markers))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "dsxsubclustering27PC0.5res.csv")
+```
+
+#Figure 2G
+```{r}
+dsxtop<-DotPlot(dsx2, features=c("Imp", "abd-A", "Abd-B", "mamo", "Wnt4", "CG42458", "heph", "Fer2", "Dbx", "Optix", "otp", "CG32532", "CG11768", "vvl", "sv", "DIP-zeta", "RunxA", "Dscam3", "CG31997", "Dh44", "TyrR", "ImpL2", "Tk", "DIP-epsilon", "CG43155", "CG4766"))
+dsxtop + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+
+Analysis of subcluster 0
+```{r}
+dsx3<-subset(x = dsx2, idents = "0")
+```
+
+#Figure 2H
+```{r}
+Idents(dsx3) <- "sex"
+dsxVNC<-DotPlot(dsx3, features = c("abd-A", "Abd-B", "Antp", "Ubx"))
+dsxVNC + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+Hox gene expression and VNC cluster annotation 
+#Figure 3A
+```{r}
+FeaturePlot(Merge, features = c("Antp", "Ubx", "abd-A", "Abd-B"), min.cutoff = "q0", ncol=4) & NoAxes()
+```
+#Figure 3 - Figure supplement 1A-D
+```{r}
+FeaturePlot(MaleMerge, features = c("Antp", "Ubx", "abd-A", "Abd-B"), min.cutoff = "q0", ncol=4) & NoAxes()
+```
+#Figure 3 - Figure supplement 1E-H
+```{r}
+FeaturePlot(FemaleMerge, features = c("Antp", "Ubx", "abd-A", "Abd-B"), min.cutoff = "q0", ncol=4) & NoAxes()
+```
+
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_VNC_annotations.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+#Figure 3B
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE, cols=c("grey", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00"))  & NoAxes() &  NoLegend() 
+```
+
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "VNCAnnotation")
+```
+
+Save 
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+Idents(MaleMerge) <- "RNA_snn_res.3"
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+
+Read in cluster annotations to label VNC clusters on UMAP
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Male_VNC_annotations.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, Annotations)
+```
+#Figure 3 - Figure supplement 1I
+```{r}
+DimPlot(MaleMerge, reduction = "umap", label=TRUE, cols=c("grey", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00"))  & NoAxes() &  NoLegend() 
+```
+
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "VNCAnnotation")
+```
+
+Save 
+```{r}
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+```
+
+
+Read in cluster annotations to label VNC clusters on UMAP
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Female_VNC_annotations.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, Annotations)
+```
+#Figure 3 - Figure supplement 1J
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", label=TRUE, cols=c("grey", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00", "#7CAE00"))  & NoAxes() &  NoLegend() 
+```
+
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "VNCAnnotation")
+```
+
+Save 
+```{r}
+saveRDS(Merge, file = "FemaleMerge2.rds")
+```
+
+
+Hox gene correlation plots. Code adapted from:https://github.com/aaron-allen/VNC_scRNAseq/blob/master/all_analysis.R
+#Figure 3C
+```{r}
+hoxGenesMerge <- FetchData(object = Merge,vars = c("Antp","Ubx","abd-A","Abd-B"))
+hoxGenesMerge.Corr <- round(cor(hoxGenesMerge,method = "pearson"), 3)
+hoxGenesMerge.Corr.p <- cor_pmat(hoxGenesMerge)
+hoxGenesMergePlot <- ggcorrplot(hoxGenesMerge.Corr, show.diag=FALSE, p.mat = hoxGenesMerge.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+hoxGenesMergePlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+
+#Figure 3 - Figure supplement 1K
+```{r}
+hoxGenes <- FetchData(object = MaleMerge,vars = c("Antp","Ubx","abd-A","Abd-B"))
+hoxGenes.Corr <- round(cor(hoxGenes,method = "pearson"), 3)
+hoxGenes.Corr.p <- cor_pmat(hoxGenes)
+hoxGenesPlot <- ggcorrplot(hoxGenes.Corr, show.diag=FALSE, p.mat = hoxGenes.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+hoxGenesPlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+#Figure 3 - Figure supplement 1L
+```{r}
+hoxGenes <- FetchData(object = FemaleMerge,vars = c("Antp","Ubx","abd-A","Abd-B"))
+hoxGenes.Corr <- round(cor(hoxGenes,method = "pearson"), 3)
+hoxGenes.Corr.p <- cor_pmat(hoxGenes)
+hoxGenesPlot <- ggcorrplot(hoxGenes.Corr, show.diag=FALSE, p.mat = hoxGenes.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+hoxGenesPlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+
+Mushroombody KC annotation
+
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_mushroom body.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "Mushroombody_KCs")
+```
+Save
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+#Figure 4A
+```{r}
+DimPlot(Merge, reduction = "umap", cols = c("grey", "#A3A500",  "#A3A500",  "#A3A500", "#00BA42", "#00BA42","#7997FF", "#00BA42", "#00BA42", "#00BA42","#00BA42"), label=TRUE)  & NoAxes() 
+```
+
+```{r}
+KCs<-subset(x = Merge, idents = c("y_KCs_1", "y_KCs_2*", "y_KCs_3", "ab_KCs_1", "ab_KCs_2*" , "ab_KCs_3" , "ab_KCs_4*" , "ab_KCs_5" , "Mushroom body KCs"))
+```
+##Figure 4 - Figure supplement 1B-C
+```{r}
+FeaturePlot(KCs, features = c("ey","Dop1R2"), ncol=6, label=TRUE)  & NoAxes()
+```
+
+
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+```
+
+Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Male_mushroombody.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, Annotations)
+```
+
+```{r}
+DimPlot(MaleMerge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+#Figure 4 - Figure supplement 1B-CD
+```{r}
+DimPlot(MaleMerge, reduction = "umap", cols= c("grey", "#00BA42", "#A3A500", "#A3A500", "#00BA42", "#00BA42"), label=TRUE)  & NoAxes() 
+```
+
+```{r}
+MaleKCs<-subset(x = MaleMerge, idents = c("y_KCs_1", "y_KCs_2", "ab_KCs_1*" , "ab_KCs_2*", "ab_KCs_3"))
+```
+
+##Figure 4 - Figure supplement 1E-F
+```{r}
+FeaturePlot(MaleKCs, features = c("ey","Dop1R2"), ncol=6, label=TRUE)  & NoAxes()
+```
+
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "Mushroombody_KCs")
+```
+
+```{r}
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+```
+
+
+```{r}
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Female_mushroombody.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, Annotations)
+```
+
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+##Figure 4 - Figure supplement 1G
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", cols= c("grey", "#A3A500", "#A3A500", "#A3A500", "#00BA42", "#00BA42","#00BA42","#00BA42"), label=TRUE)  & NoAxes() 
+```
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "Mushroombody_KCs")
+```
+
+
+```{r}
+saveRDS(FemaleMerge, file = "FemaleMerge2.rds")
+```
+
+```{r}
+FemaleKCs<-subset(x = FemaleMerge, idents = c("y_KCs_1", "y_KCs_2", "y_KCs_3", "ab_KCs_1" , "ab_KCs_2", "ab_KCs_3" , "ab_KCs_4"))
+```
+
+#Figure 4 - Figure supplement 1CH-I
+```{r}
+FeaturePlot(FemaleKCs, features = c("ey","Dop1R2"), label=TRUE)  & NoAxes()
+```
+
+Subcluster high confidence KC cell clusters
+```{r}
+Idents(Merge) <- "Mushroombody_KCs"
+KCsHigh<-subset(x = Merge, idents = c("y_KCs_1", "y_KCs_3", "ab_KCs_1", "ab_KCs_3" , "ab_KCs_5" , "Mushroom body KCs"))
+```
+
+```{r}
+KCsHigh <- NormalizeData(KCsHigh, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+KCsHigh<- FindVariableFeatures(KCsHigh, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+all.genesM <- rownames(KCsHigh)
+KCsHigh <- ScaleData(KCsHigh, features = all.genesM)
+```
+
+```{r}
+KCsHigh<- RunPCA(KCsHigh, features = VariableFeatures(object = KCsHigh), npcs =100)
+```
+
+```{r}
+KCsHigh<- JackStraw(KCsHigh, num.replicate = 100,dims = 100)
+KCsHigh<- ScoreJackStraw(KCsHigh, dims = 1:100)
+```
+
+```{r}
+JackStrawPlot(KCsHigh, dims = 1:100)
+```
+23 PCs
+
+```{r}
+KCsHigh <- RunUMAP(KCsHigh, dims = 1:23)
+```
+
+Run the clustering
+```{r}
+KCsHigh <- FindNeighbors(KCsHigh, dims = 1:23)
+KCsHigh<- FindClusters(KCsHigh, resolution = c(0.1, 0.2, 0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+```
+
+#Figure 4B
+```{r}
+Idents(KCsHigh) <- "RNA_snn_res.0.5"
+DimPlot(KCsHigh, reduction = "umap", label=TRUE) & NoAxes() & NoLegend()
+```
+
+```{r}
+Idents(KCsHigh) <- "sex"
+```
+#Figure 4C
+```{r}
+DimPlot(KCsHigh, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+```
+
+```{r}
+Idents(KCsHigh) <- "RNA_snn_res.0.5"
+KCHigh.markers <- FindAllMarkers(KCsHigh, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top5<-KCHigh.markers%>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+top5
+top10<-KCHigh.markers%>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+top10
+```
+
+#Source data 6
+```{r}
+library(data.table)
+data_to_write_out <- as.data.frame(as.matrix(KCHigh.markers))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "KCsubclustering23PC0.5res.csv")
+```
+
+
+```{r}
+Idents(KCsHigh) <- "Mushroombody_KCs"
+```
+
+#Figure 4 - Figure supplement 1J
+```{r}
+DimPlot(KCsHigh, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+#Figure 4D
+```{r}
+KCtop5<-DotPlot(object = KCsHigh, feature = (unique(top5$gene))) + RotatedAxis()
+KCtop5+ theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+
+FAN analysis
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+Read in cluster annotations
+```{r}
+FANs <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge Cell annotations_FANs.csv", header=TRUE, sep=",")
+head(FANs)
+FANs$FANs <- as.character(FANs$FANs)
+FANs <- as.vector(FANs$FANs)
+```
+
+```{r}
+names(FANs)<-levels(Merge)
+Merge<-RenameIdents(Merge, FANs)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap")
+```
+
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "FANs")
+```
+#Figure 5A
+```{r}
+Idents(Merge) <- "FANs"
+DimPlot(object = Merge, reduction = "umap",cols = c("grey", "light green", "brown", "light blue", "orange"))
+```
+
+Define if there are any co-expressing populations and their extent. Code modified from Allen et al. 2020:https://github.com/aaron-allen/VNC_scRNAseq/blob/master/all_analysis.R
+```{r}
+FullGad1 <- OldWhichCells(object = Merge,subset.name = "Gad1",low.threshold = 0)
+FullVGlut <- OldWhichCells(object = Merge,subset.name = "VGlut",low.threshold = 0)
+FullVAChT <- OldWhichCells(object = Merge,subset.name = "VAChT",low.threshold = 0)
+```
+
+
+```{r}
+Fullfit <- euler(c("VAChT" = round(100*length(setdiff(setdiff(FullVAChT,FullVGlut),FullGad1))/length(OldWhichCells(object = Merge))),
+               "VGlut" = round(100*length(setdiff(setdiff(FullVGlut,FullVAChT),FullGad1))/length(OldWhichCells(object = Merge))),
+               "Gad1" = round(100*length(setdiff(setdiff(FullGad1,FullVAChT),FullVGlut))/length(OldWhichCells(object = Merge))),
+               "VAChT&VGlut" = round(100*length(setdiff(intersect(FullVAChT,FullVGlut),FullGad1))/length(OldWhichCells(object = Merge))),
+               "VAChT&Gad1" = round(100*length(setdiff(intersect(FullVAChT,FullGad1),FullVGlut))/length(OldWhichCells(object = Merge))),
+               "VGlut&Gad1" = round(100*length(setdiff(intersect(FullVGlut,FullGad1),FullVAChT))/length(OldWhichCells(object = Merge))),
+               "VAChT&VGlut&Gad1" = round(100*length(intersect(FullVAChT,intersect(FullVGlut,FullGad1)))/length(OldWhichCells(object = Merge)))))
+```
+#Figure 5B
+```{r}
+plot(Fullfit,
+     quantities = T,
+     fills = list(fill = c("lightgreen", "orange", "light blue"), alpha = 1)
+)
+```
+
+#Figure 5C-G
+```{r}
+FeaturePlot(Merge, features = c("ChAT", "VAChT", "Gad1", "VGAT", "VGlut"), min.cutoff = "q0", ncol=1) & NoAxes()
+```
+
+Male data set FANs
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+```
+
+Read in cluster annotations
+```{r}
+FANs <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Male_FANs.csv", header=TRUE, sep=",")
+head(FANs)
+FANs$FANs <- as.character(FANs$FANs)
+FANs <- as.vector(FANs$FANs)
+```
+
+```{r}
+names(FANs)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, FANs)
+```
+
+```{r}
+DimPlot(MaleMerge, reduction = "umap")
+```
+
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "FANs")
+```
+
+#Figure 5- Figure supplement 1A
+```{r}
+Idents(MaleMerge) <- "FANs"
+DimPlot(object = MaleMerge, reduction = "umap",cols = c("grey", "light blue", "orange", "light green", "red"))
+```
+
+
+```{r}
+MaleGad1 <- OldWhichCells(object = MaleMerge,subset.name = "Gad1",low.threshold = 0)
+MaleVGlut <- OldWhichCells(object = MaleMerge,subset.name = "VGlut",low.threshold = 0)
+MaleVAChT <- OldWhichCells(object = MaleMerge,subset.name = "VAChT",low.threshold = 0)
+```
+
+```{r}
+Malefit <- euler(c("VAChT" = round(100*length(setdiff(setdiff(MaleVAChT,MaleVGlut),MaleGad1))/length(OldWhichCells(object = MaleMerge))),
+               "VGlut" = round(100*length(setdiff(setdiff(MaleVGlut,MaleVAChT),MaleGad1))/length(OldWhichCells(object = MaleMerge))),
+               "Gad1" = round(100*length(setdiff(setdiff(MaleGad1,MaleVAChT),MaleVGlut))/length(OldWhichCells(object = MaleMerge))),
+               "VAChT&VGlut" = round(100*length(setdiff(intersect(MaleVAChT,MaleVGlut),MaleGad1))/length(OldWhichCells(object = MaleMerge))),
+               "VAChT&Gad1" = round(100*length(setdiff(intersect(MaleVAChT,MaleGad1),MaleVGlut))/length(OldWhichCells(object = MaleMerge))),
+               "VGlut&Gad1" = round(100*length(setdiff(intersect(MaleVGlut,MaleGad1),MaleVAChT))/length(OldWhichCells(object = MaleMerge))),
+               "VAChT&VGlut&Gad1" = round(100*length(intersect(MaleVAChT,intersect(MaleVGlut,MaleGad1)))/length(OldWhichCells(object = MaleMerge)))))
+```
+#Figure 5- Figure supplement 1B
+```{r}
+plot(Malefit,
+     quantities = T,
+     fills = list(fill = c("lightgreen", "orange", "light blue"), alpha = 1)
+)
+```
+#Figure 5- Figure supplement 1C-G
+```{r}
+FeaturePlot(MaleMerge, features = c("ChAT", "VAChT", "Gad1", "VGAT", "VGlut"), min.cutoff = "q0") & NoAxes()
+```
+
+Female data set FANs
+```{r}
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+Read in cluster annotations
+```{r}
+FANs <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Female_FANs.csv", header=TRUE, sep=",")
+head(FANs)
+FANs$FANs <- as.character(FANs$FANs)
+FANs <- as.vector(FANs$FANs)
+head(FANs)
+```
+
+```{r}
+names(FANs)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, FANs)
+```
+
+```{r}
+DimPlot(FemaleMerge, reduction = "umap")
+```
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "FANs")
+```
+#Figure 5- Figure supplement 1H
+```{r}
+Idents(FemaleMerge) <- "FANs"
+DimPlot(object = FemaleMerge, reduction = "umap",cols = c("red", "grey", "light green", "orange", "light blue"))
+```
+
+```{r}
+FemaleGad1 <- OldWhichCells(object = FemaleMerge,subset.name = "Gad1",low.threshold = 0)
+FemaleVGlut <- OldWhichCells(object = FemaleMerge,subset.name = "VGlut",low.threshold = 0)
+FemaleVAChT <- OldWhichCells(object = FemaleMerge,subset.name = "VAChT",low.threshold = 0)
+```
+
+```{r}
+Femalefit <- euler(c("VAChT" = round(100*length(setdiff(setdiff(FemaleVAChT,FemaleVGlut),FemaleGad1))/length(OldWhichCells(object = FemaleMerge))),
+               "VGlut" = round(100*length(setdiff(setdiff(FemaleVGlut,FemaleVAChT),FemaleGad1))/length(OldWhichCells(object = FemaleMerge))),
+               "Gad1" = round(100*length(setdiff(setdiff(FemaleGad1,FemaleVAChT),FemaleVGlut))/length(OldWhichCells(object = FemaleMerge))),
+               "VAChT&VGlut" = round(100*length(setdiff(intersect(FemaleVAChT,FemaleVGlut),FemaleGad1))/length(OldWhichCells(object = FemaleMerge))),
+               "VAChT&Gad1" = round(100*length(setdiff(intersect(FemaleVAChT,FemaleGad1),FemaleVGlut))/length(OldWhichCells(object = FemaleMerge))),
+               "VGlut&Gad1" = round(100*length(setdiff(intersect(FemaleVGlut,FemaleGad1),FemaleVAChT))/length(OldWhichCells(object = FemaleMerge))),
+               "VAChT&VGlut&Gad1" = round(100*length(intersect(FemaleVAChT,intersect(FemaleVGlut,FemaleGad1)))/length(OldWhichCells(object = FemaleMerge)))))
+```
+#Figure 5- Figure supplement 1I
+```{r}
+plot(Femalefit,
+     quantities = T,
+     fills = list(fill = c("lightgreen", "orange", "light blue"), alpha = 1)
+)
+```
+#Figure 5- Figure supplement 1J-N
+```{r}
+FeaturePlot(FemaleMerge, features = c("ChAT", "VAChT", "Gad1", "VGAT", "VGlut"), min.cutoff = "q0") & NoAxes()
+```
+
+```{r}
+VGlutlusters<-subset(x = Merge, idents = c("Glutamatergic"))
+```
+
+#Figure 5T
+```{r}
+Idents(VGlutlusters) <- "RNA_snn_res.1.2"
+VGlutpros<-DotPlot(VGlutlusters, features= "pros")
+VGlutpros + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+Aminergic analysis
+
+#Figure 6- Figure supplement 1A
+```{r}
+FeaturePlot(MaleMerge, features = c("Vmat","DAT", "ple", "SerT", "Tdc2"), ncol=5)  & NoAxes()
+
+```
+#Figure 6- Figure supplement 1B
+```{r}
+FeaturePlot(FemaleMerge, features = c("Vmat","DAT", "ple", "SerT", "Tdc2"), ncol=5)  & NoAxes()
+
+```
+
+#Figure 6- Figure supplement 1C
+```{r}
+FeaturePlot(Merge, features = c("Vmat","DAT", "ple", "SerT", "Tdc2"), ncol=5)  & NoAxes()
+
+```
+
+Read in monoamine annotations and add them to each data set:
+
+Set originial idents
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+Idents(MaleMerge) <- "RNA_snn_res.3"
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_monoamine_annotation.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "Monoamines")
+```
+Save
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Male_monoamine_annotation.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, Annotations)
+```
+
+```{r}
+DimPlot(MaleMerge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "Monoamines")
+```
+
+```{r}
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Female_monoamine_annotation.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, Annotations)
+```
+
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "Monoamines")
+```
+
+```{r}
+saveRDS(FemaleMerge, file = "FemaleMerge2.rds")
+```
+
+#Figure 6B
+```{r}
+DimPlot(Merge, reduction = "umap", cols= c("grey", "#ABA300", "#00A9FF", "#C77CFF", "#C77CFF"))  & NoAxes() 
+```
+#Figure 6- Figure supplement 1H
+```{r}
+DimPlot(MaleMerge, reduction = "umap", cols= c("grey", "#00A9FF", "#C77CFF"))  & NoAxes()  
+```
+#Figure 6- Figure supplement 1I
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", cols= c("grey", "#00A9FF", "#C77CFF", "#ABA300"))  & NoAxes() 
+```
+
+#Vmat cluster annotation
+
+#Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_vmat.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "Vmat")
+```
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+#Figure 6A
+```{r}
+DimPlot(Merge, reduction = "umap", cols = c("grey", "#562B3E",  "#562B3E",  "#562B3E"))  & NoAxes() &NoLegend()
+```
+Dopamine clusters
+```{r}
+DopamineClusters<-subset(x = Merge, idents = c("58", "74", "89"))
+```
+#Figure 6C
+```{r}
+dopamine<-DotPlot(DopamineClusters, features=c("Vmat", "DAT", "Ddc", "Fer2", "DIP-delta", "sick", "LpR1"))
+dopamine + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+#Figure 6- Figure supplement 1J
+```{r}
+FeaturePlot(DopamineClusters, features = c("DAT","ple" "Abd-B"), ncol=2)  & NoAxes()
+```
+
+Male dopamine clusters
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+MaleDopa<-subset(x = MaleMerge, idents = c("56", "67"))
+```
+
+#Figure 6- Figure supplement 1K
+```{r}
+FeaturePlot(MaleDopa, features = c("Ubx", "Abd-B"), ncol=2)  & NoAxes()
+```
+
+#Figure 6- Figure supplement 1L
+```{r}
+maledopamine<-DotPlot(MaleDopa, features= c("beat-VI", "CG42458", "DIP-beta", "trh", "Fas3", "VGlut", "Imp", "Con", "Fas2", "CG2269"))
+maledopamine + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+Serotonergic clusters
+```{r}
+SerTClusters<-subset(x = Merge, idents = c("73", "86", "92"))
+```
+#Figure 6D
+```{r}
+SerotoninDotPlot<-DotPlot(SerTClusters, features=c("SerT", "spab","CG42402", "Imp", "Ddc", "CG15082", "Nplp1", "unc-13-4A", "beat-Ia", "VGlut", "AstC", "CG2269", "Gyc32E" ))
+SerotoninDotPlot + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+Serotonin SerT cells:
+```{r}
+SerT<-subset(x=Merge, subset= SerT > 0  )
+```
+
+***FOR GENE NAMES with hyphens in them, like abd-A and Abd-B, backticks must be used to subset
+
+```{r}
+SerTabd<-subset(x=SerT, subset= `abd-A` > 0 |`Abd-B` > 0 )
+```
+
+```{r}
+Idents(SerTabd) <- "sex"
+```
+
+```{r}
+cellsperclustersex<-table(Idents(SerTabd),SerTabd$sex)
+cellsperclustersex
+```
+#Figure 6E
+```{r}
+VlnPlot(SerTabd, features=c("abd-A", "Abd-B", "dsx"), ncol = 3, cols = c("#00BFC4", "#F8766D"))
+```
+
+```{r}
+SerTabd<- NormalizeData(SerTabd, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+SerTabd<- FindVariableFeatures(SerTabd, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+all.genesM <- rownames(SerTabd)
+SerT <- ScaleData(SerT, features = all.genesM)
+```
+
+```{r}
+SerTabd<- RunPCA(SerTabd, features = VariableFeatures(object = SerTabd), npcs =25)
+```
+
+```{r}
+SerTabd<- JackStraw(SerTabd, num.replicate = 100,dims = 25)
+SerTabd<- ScoreJackStraw(SerTabd, dims = 1:25)
+```
+
+```{r}
+JackStrawPlot(SerTabd, dims = 1:25)
+```
+1 PC
+
+```{r}
+SerTabd<- RunUMAP(SerTabd, dims = 1:5)
+```
+
+Run the clustering
+```{r}
+SerTabd <- FindNeighbors(SerTabd, dims = 1:5)
+SerTabd<- FindClusters(SerTabd, resolution = c(0.1, 0.2, 0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+```
+
+Run differential expression
+#Source data 6
+```{r}
+Idents(SerTabd) <- "sex"
+SerTabd.markers <- FindAllMarkers(SerTabd, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top5<-SerTabd.markers%>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+top5
+top10<-SerTabd.markers%>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+top10
+```
+
+
+#Figure 6F
+```{r}
+Dopamine<-subset(x=Merge, subset=DAT > 0 | ple > 0 )
+```
+
+```{r}
+cellproportion<-PrctCellExpringGene(Dopamine,genes = c("ChAT","VAChT", "Gad1", "VGAT", "VGlut"), group.by = "sex")
+cellproportion
+```
+#Figure 6G
+```{r}
+SerT<-subset(x=Vmat, subset= SerT > 0  )
+```
+
+```{r}
+cellproportion<-PrctCellExpringGene(SerT ,genes = c("ChAT","VAChT", "Gad1", "VGAT", "VGlut"), group.by = "sex")
+cellproportion
+```
+
+#Figure 6H
+```{r}
+AllTdc2<-subset(x=Merge, subset= Tdc2 > 0)
+```
+
+```{r}
+cellproportion<-PrctCellExpringGene(AllTdc2 ,genes = c("ChAT","VAChT", "Gad1", "VGAT", "VGlut"), group.by = "sex")
+cellproportion
+```
+
+Circadian annotations
+Read in cluster annotations
+```{r}
+CircAnnotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_CircadianAnnotation.csv", header=TRUE, sep=",")
+head(CircAnnotations)
+CircAnnotations$Annotation <- as.character(CircAnnotations$Annotation)
+CircAnnotations <- as.vector(CircAnnotations$Annotation)
+```
+
+```{r}
+names(CircAnnotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, CircAnnotations)
+```
+#Figure 7A
+```{r}
+DimPlot(object = Merge, reduction = "umap",cols = c("grey", "blue", "blue", label=TRUE)) & NoAxes() &  NoLegend() 
+```
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "Circadian")
+```
+
+```{r}
+Idents(Merge) <- "Circadian"
+```
+Circadian subclustering
+```{r}
+Circadian<-subset(x = Merge, idents = c("Circadian_1", "Circadian_2"))
+```
+
+```{r}
+Circadian <- NormalizeData(Circadian, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+Circadian<- FindVariableFeatures(Circadian, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+all.genesM <- rownames(Circadian)
+Circadian <- ScaleData(Circadian, features = all.genesM)
+```
+
+```{r}
+Circadian<- RunPCA(Circadian, features = VariableFeatures(object = Circadian), npcs = 50)
+```
+
+```{r}
+Circadian<- JackStraw(Circadian, num.replicate = 100,dims = 50)
+Circadian<- ScoreJackStraw(Circadian, dims = 1:50)
+```
+
+```{r}
+JackStrawPlot(Circadian, dims = 1:50)
+```
+2 PCs
+
+```{r}
+Circadian <- RunUMAP(Circadian, dims = 1:2)
+```
+
+Run the clustering
+```{r}
+Circadian <- FindNeighbors(Circadian, dims = 1:2)
+Circadian<- FindClusters(Circadian, resolution = c(0.1, 0.2, 0.5,0.7,1,1.1,1.2,1.3,1.5,2,2.5))
+```
+
+Make the Umap
+#Figure 7B
+```{r}
+Idents(Circadian) <- "RNA_snn_res.2.5"
+DimPlot(Circadian, reduction = "umap")
+```
+
+#Figure 7C
+```{r}
+Idents(Circadian) <- "sex"
+p3<-DimPlot(Circadian, reduction = "umap", cols = c("#00BFC4", "#F8766D")) & NoAxes()
+p3
+```
+
+```{r}
+Circadian.markers <- FindAllMarkers(Circadian, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top5<-Circadian.markers%>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+```
+#Source data 6
+```{r}
+data_to_write_out <- as.data.frame(as.matrix(Circadian.markers))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "Circadiansubclustering2PC2.5res.csv")
+```
+
+#Figure 7D
+```{r}
+plot<-DotPlot(Circadian,features = top5$gene)
+plot + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+#Figure 7- Figure supplement 1A
+```{r}
+FeaturePlot(Merge, features = c("per","tim", "Clk", "vri", "Pdp1"), min.cutoff = "q0", ncol=5) & NoAxes()
+```
+#Figure 7- Figure supplement 1B
+```{r}
+FeaturePlot(MaleMerge, features = c("per","tim", "Clk", "vri", "Pdp1"), min.cutoff = "q0", ncol=5) & NoAxes()
+```
+#Figure 7- Figure supplement 1C
+```{r}
+FeaturePlot(FemaleMerge, features = c("per","tim", "Clk", "vri", "Pdp1"), min.cutoff = "q0", ncol=5) & NoAxes()
+```
+#Figure 7- Figure supplement 1D
+```{r}
+plot<-DotPlot(Circadian,features = c("per","tim", "Clk", "vri", "Pdp1"))
+plot + theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+
+Neuropeptides 
+```{r}
+neuropeptides <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/neuropeptides.csv", header=TRUE, sep=",")
+dplyr::pull(neuropeptides, current_symbol)
+```
+ 
+```{r}
+neuropeptides<-dplyr::pull(neuropeptides, current_symbol)
+```
+ 
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+```{r}
+cluster.averages <- AverageExpression(Merge, features =neuropeptides, slot= "scale.data")
+cluster.averages<-as.vector(cluster.averages$RNA)
+```
+#Figure 8A
+```{r fig.height=35, fig.width=35}
+pheatmap(cluster.averages,
+         breaks=seq(-2,2,0.05),
+         color = diverging_hcl(80, "Tropic"),
+         border_color = NA,
+         treeheight_row = 50,
+         treeheight_col = 50,
+         cluster_rows = T,
+         cluster_cols = T,
+         fontsize = 30,
+         angle_col = 90)
+```
+
+```{r}
+Idents(Merge) <- "RNA_snn_res.1.2"
+```
+
+Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge_fruneuropeptides.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE)  & NoAxes() 
+```
+
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "Neuropeptides")
+```
+Save
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+#Figure 8B
+```{r}
+Idents(Merge) <- "Neuropeptides"
+DimPlot(Merge, reduction = "umap", cols = c("grey", "#3C5488B2",  "#F39B7FB2",  "#3C5488B2", "#3C5488B2", "#3C5488B2","#3C5488B2", "#F39B7FB2", "#3C5488B2", "#3C5488B2","#00A087B2", "#3C5488B2", "#3C5488B2", "#3C5488B2"), label=TRUE)  & NoAxes() 
+```
+
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Male_fruneuropeptides.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, Annotations)
+```
+#Figure 8- Figure supplement 1A
+```{r}
+DimPlot(MaleMerge, reduction = "umap", cols = c("grey", "#3C5488B2",  "#F39B7FB2",  "#3C5488B2", "#00A087B2", "#3C5488B2","#3C5488B2", "#3C5488B2", "#F39B7FB2", "#00A087B2"), label=TRUE)  & NoAxes()  
+```
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "Neuropeptides")
+```
+
+```{r}
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+```
+
+```{r}
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Female_fruneuropeptides.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, Annotations)
+```
+#Figure 8- Figure supplement 1B
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", cols = c("grey", "#F39B7FB2",  "#3C5488B2",  "#3C5488B2", "#F39B7FB2", "#3C5488B2","#3C5488B2", "#3C5488B2"), label=TRUE)  & NoAxes() 
+```
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "Neuropeptides")
+```
+
+
+```{r}
+saveRDS(FemaleMerge, file = "FemaleMerge2.rds")
+```
+
+nAChR expression
+#Source data 8
+```{r}
+cellproportion<-PrctCellExpringGene(Merge ,genes =c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"), group.by = "orig.ident")
+cellproportion
+```
+#Source data 8
+```{r}
+cellproportion<-PrctCellExpringGene(MaleMerge ,genes =c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"), group.by = "orig.ident")
+cellproportion
+```
+#Source data 8
+```{r}
+cellproportion<-PrctCellExpringGene(FemaleMerge ,genes =c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"), group.by = "orig.ident")
+cellproportion
+```
+
+#Figure 9A
+```{r}
+nAChRMale <- FetchData(object = MaleMerge,vars = c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"))
+nAChRMale.Corr <- round(cor(nAChRMale,method = "pearson"), 3)
+nAChRMale.Corr.p <- cor_pmat(nAChRMale)
+nAChRMalePlot <- ggcorrplot(nAChRMale.Corr, show.diag=FALSE, p.mat = nAChRMale.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+nAChRMalePlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+#Figure 9B
+```{r}
+nAChRFemale <- FetchData(object = FemaleMerge,vars = c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"))
+nAChRFemale.Corr <- round(cor(nAChRFemale,method = "pearson"), 3)
+nAChRFemale.Corr.p <- cor_pmat(nAChRFemale)
+nAChRFemalePlot <- ggcorrplot(nAChRFemale.Corr, show.diag=FALSE, p.mat = nAChRFemale.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+nAChRFemalePlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+#Figure 9C
+```{r}
+nAChRM <- FetchData(object = Merge,vars = c("nAChRalpha1", "nAChRalpha2", "nAChRalpha3","nAChRalpha4","nAChRalpha5","nAChRalpha6","nAChRalpha7", "nAChRbeta1", "nAChRbeta2", "nAChRbeta3"))
+nAChRM.Corr <- round(cor(nAChRM,method = "pearson"), 3)
+nAChRM.Corr.p <- cor_pmat(nAChRM)
+nAChRMPlot <- ggcorrplot(nAChRM.Corr, show.diag=FALSE, p.mat = nAChRM.Corr.p, insig = "blank", outline.color = "white", lab=TRUE, digits=2)
+nAChRMPlot + scale_fill_gradient2(limit = c(-0.3,0.3), low = "blue", high =  "red", mid = "white", midpoint = 0)
+```
+
+
+#Source data 9
+Run differential expression per cluster by sex:
+```{r}
+Merge$clusterbysex <- paste(Idents(Merge), Merge$sex, sep = "_")
+Merge$RNA_snn_res.1.2 <- Idents(Merge)
+Idents(Merge) <- "clusterbysex"
+```
+
+Loop for running all clusters by sex:
+```{r}
+output <- "MergeAllclusters107PC1.2_bysexcluster"
+for (i in 0:112){ #or however many clusters you have
+try({
+ident1 <- paste0(i,"_Male")
+ident2 <- paste0(i,"_Female")
+condition.diffgenes <- FindMarkers(Merge, ident.1 = ident1, ident.2=ident2, min.pct=0.25, logfc.threshold=0.25)
+write.csv(condition.diffgenes, file=paste0(output,i,".csv"))
+})
+}
+```
+
+Manually added cluster number column to each output spreadsheet and now will merge all into one
+```{r}
+library(dplyr)
+library(readr)
+df <- list.files(path="/home/cpalmateer/Documents/Colleen's R-Notebooks/sexbias", full.names = TRUE) %>% 
+  lapply(read_csv) %>% 
+  bind_rows 
+```
+
+```{r}
+library(data.table)
+data_to_write_out <- as.data.frame(as.matrix(df))
+fwrite(x = data_to_write_out, row.names = TRUE, file = "alldiffexpressedgenesbetweensex_clusternumber.csv")
+```
+
+
+```{r}
+igggenes <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/igglist.csv", header=TRUE, sep=",")
+dplyr::pull(igggenes, current_symbol)
+```
+
+ 
+```{r}
+Igggenes<-dplyr::pull(igggenes, current_symbol)
+```
+ 
+
+```{r}
+cluster.averages3 <- AverageExpression(Merge, features =Igggenes, slot= "scale.data")
+cluster.averages3<-as.vector(cluster.averages3$RNA)
+```
+##Figure 11
+```{r fig.height=35, fig.width=35}
+pheatmap(cluster.averages3,
+         breaks=seq(-2,2,0.05),
+         color = diverging_hcl(80, "Tropic"),
+         border_color = NA,
+         treeheight_row = 50,
+         treeheight_col = 50,
+         cluster_rows = F,
+         cluster_cols = T,
+         fontsize = 20,
+         angle_col = 90)
+```
+##Figure 11- Figure supplement 1A
+```{r fig.height=15, fig.width=20}
+dprDIPdotplotbysex<-DotPlot(Merge, features = c("dpr1", "dpr2", "dpr3", "dpr4", "dpr5", 
+                  "dpr6", "dpr7", "dpr8", "dpr9", "dpr10", "dpr11", 
+                  "dpr12", "dpr13", "dpr14", "dpr15", "dpr16", "dpr17", "dpr18", 
+                  "dpr19", "dpr20","dpr21", "DIP-alpha", "DIP-beta", "DIP-gamma", "DIP-delta", "DIP-epsilon", "DIP-zeta"
+                  , "DIP-eta", "DIP-iota", "DIP-theta","CG45781", "CG31814"), split.by = "sex", cols=c("#00BFC4", "#F8766D"))
+
+dprDIPdotplotbysex+ theme(axis.text.x = element_text(angle = 90, hjust=1))
+```
+
+
+All homeobox-like transcription factors that are cell marker genes
+```{r}
+Hmarkergenes <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Homeobox_markergenes.csv", header=TRUE, sep=",")
+dplyr::pull(Hmarkergenes , current_symbol)
+```
+
+```{r}
+Hmarkergenes <-dplyr::pull(Hmarkergenes , current_symbol)
+Hmarkergenes <-as.vector(Hmarkergenes)
+```
+#Figure 12- Figure supplement 2
+```{r}
+HTFdotplot<-DotPlot(Merge, features = Hmarkergenes)
+HTFdotplot+ theme(axis.text.x = element_text(angle = 90, hjust=1))   
+```
+
+
+All C2H2 transcription factors that are cell marker genes
+```{r}
+Cmarkergenes <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/C2H2MarkerGenes.csv", header=TRUE, sep=",")
+dplyr::pull(Cmarkergenes , current_symbol)
+```
+
+```{r}
+Cmarkergenes <-dplyr::pull(Cmarkergenes , current_symbol)
+Cmarkergenes <-as.vector(Cmarkergenes)
+```
+
+##Figure 12- Figure supplement 3
+```{r}
+CTFdotplot<-DotPlot(Merge, features = Cmarkergenes)
+CTFdotplot+ theme(axis.text.x = element_text(angle = 90, hjust=1))   
+```
+
+
+All Helix-turn-helix transcription factors that are cell marker genes
+```{r}
+HTHmarkergenes <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/HTHMarkergenes.csv", header=TRUE, sep=",")
+dplyr::pull(HTHmarkergenes , current_symbol)
+```
+
+```{r}
+HTHmarkergenes <-dplyr::pull(HTHmarkergenes , current_symbol)
+HTHmarkergenes <-as.vector(HTHmarkergenes)
+```
+#Figure 12- Figure supplement 3
+```{r}
+HTHdotplot<-DotPlot(Merge, features = HTHmarkergenes)
+HTHdotplot+ theme(axis.text.x = element_text(angle = 90, hjust=1))   
+```
+
+
+All TFs that show differential expression between sexes in one or more clsuters
+```{r}
+sexdiffTFs <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/sexdiffTFs.csv", header=TRUE, sep=",")
+dplyr::pull(sexdiffTFs , current_symbol)
+```
+
+```{r}
+sexdiffTFs <-dplyr::pull(sexdiffTFs , current_symbol)
+sexdiffTFs<-as.vector(sexdiffTFs)
+```
+#Figure 12- Figure supplement 1
+```{r}
+TFsexdiffdotplot<-DotPlot(Merge, features = sexdiffTFs, split.by = "sex", cols=c("#00BFC4", "#F8766D"))
+TFsexdiffdotplot+ theme(axis.text.x = element_text(angle = 90, hjust=1))   
+```
+
+Full annotation list
+Read in cluster annotations
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/Merge Cell annotations_Full.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(Merge)
+Merge<-RenameIdents(Merge, Annotations)
+```
+
+```{r}
+DimPlot(Merge, reduction = "umap", label=TRUE)  & NoAxes() &  NoLegend() 
+```
+
+
+```{r}
+Merge <- StashIdent(object = Merge, save.name = "FullAnnotation")
+```
+
+Save
+
+```{r}
+saveRDS(Merge, file = "Merge2.rds")
+```
+
+
+```{r}
+Idents(MaleMerge) <- "RNA_snn_res.3"
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/MaleAnnotations_Full.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(MaleMerge)
+MaleMerge<-RenameIdents(MaleMerge, Annotations)
+```
+#Figure 1
+```{r}
+DimPlot(MaleMerge, reduction = "umap", label=TRUE)  & NoAxes() &  NoLegend() 
+```
+
+```{r}
+MaleMerge <- StashIdent(object = MaleMerge, save.name = "FullAnnotation")
+```
+
+```{r}
+saveRDS(MaleMerge, file = "MaleMerge2.rds")
+```
+
+```{r}
+Idents(FemaleMerge) <- "RNA_snn_res.0.7"
+```
+
+```{r}
+Annotations <- read.csv(file="/home/cpalmateer/Documents/Colleen's R-Notebooks/FemaleAnnotations_Full.csv", header=TRUE, sep=",")
+head(Annotations)
+Annotations$Annotation <- as.character(Annotations$Annotation)
+Annotations <- as.vector(Annotations$Annotation)
+```
+
+```{r}
+names(Annotations)<-levels(FemaleMerge)
+FemaleMerge<-RenameIdents(FemaleMerge, Annotations)
+```
+
+```{r}
+DimPlot(FemaleMerge, reduction = "umap", label=TRUE)  & NoAxes() &  NoLegend() 
+```
+
+
+```{r}
+FemaleMerge <- StashIdent(object = FemaleMerge, save.name = "FullAnnotation")
+```
+
+```{r}
+saveRDS(FemaleMerge, file = "FemaleMerge2.rds")
+```
+
+#Source data 3
+Marker gene comparison to fru P1 TRAP data at 48hr APF from Palmateer et al. 2021
+```{r}
+library(GeneOverlap)
+```
+Now to bring the lists in
+
+I pulled the genome size from the latest ensemble release BDGP6 and took the sum of coding and non coding genes, which brings us to 17428
+```{r}
+genomesize<-17428
+```
+
+Read in gene lists for comparisons
+```{r}
+SClists<- read.table(file="~/Desktop/AllGenelistsformarkers.csv", header=TRUE, sep=",")
+```
+
+```{r}
+TRAPlists<- read.table(file="~/Desktop/48hrAPFTRAPlists.csv", header=TRUE, sep=",")
+```
+
+```{r fig.height=20, fig.width=20}
+gom.obj1 <- newGOM(SClists,TRAPlists,
+                   genomesize)
+drawHeatmap(gom.obj1,grid.col="Blues", what="Jaccard", note.col="black")
+getMatrix(gom.obj1, "pval")
+```
+
+```{r}
+TRAPOverlapP<-print(getMatrix(gom.obj1, "pval"))
+```
+
+```{r}
+write.table(TRAPOverlapP, file = "TRAPoverlapPvals.csv")
+```
+
+```{r}
+TRAPOverlapJ<-print(getMatrix(gom.obj1, "Jaccard"))
+```
+
+```{r}
+write.table(TRAPOverlapJ, file = "TRAPoverlapJaccard.csv")
+```
+
+
+
+
+
+
+
+
